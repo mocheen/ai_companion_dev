@@ -1,0 +1,31 @@
+# API配置
+api:
+  api_key: "24574694451e4109a93b500d1af68688.pVBQOOdyF2sKfLTR"  
+  model: "glm-4.7"  
+  base_url: "https://open.bigmodel.cn/api/paas/v4/"
+
+# 短期记忆配置
+short_term_memory:
+  max_turns: 20  
+
+# 对话配置
+chat:
+  temperature: 0.7  # 温度参数，控制随机性
+  max_tokens: 2000  # 最大生成token数
+  timeout: 30  # API请求超时时间(秒)
+
+# 提示文件路径
+prompts:
+  system_prompt: "prompts/system_prompt.txt"
+  user_prompt: "prompts/user_prompt.txt"
+
+# 日志配置
+logging:
+  level: "DEBUG"  # 日志级别: DEBUG, INFO, WARNING, ERROR
+  log_dir: "logs"
+  log_file: "ai_companion.log"
+
+# 记忆检索配置
+memory_retrieval:
+  medium_term_count: 3  # 检索的中期记忆卡片数量
+  long_term_count: 2    # 检索的长期记忆卡片数量

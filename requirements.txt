@@ -1,0 +1,12 @@
+# AI伙伴依赖库
+
+# HTTP请求库
+requests>=2.31.0
+
+# YAML配置文件解析
+PyYAML>=6.0.0
+
+# 后续可能需要的依赖（记忆系统开发时使用）
+# chromadb>=0.4.0
+# langchain>=0.1.0
+# sentence-transformers>=2.2.0

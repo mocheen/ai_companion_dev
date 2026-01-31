@@ -1,0 +1,15 @@
+当前时间：{current_time}
+
+短期记忆对话历史：
+{short_term_memory}
+
+可能相关的长期记忆：
+{long_term_memory}
+
+可能相关的中期记忆：
+{medium_term_memory}
+
+当前对话消息：
+{user_message}
+
+请综合以上信息，给出合适的回复。
