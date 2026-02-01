@@ -8,6 +8,7 @@ import logging
 import yaml
 from pathlib import Path
 from typing import Dict, Any
+from datetime import datetime
 
 
 def load_config(config_path: str = "config/config.yaml") -> Dict[str, Any]:
@@ -37,6 +38,7 @@ def load_config(config_path: str = "config/config.yaml") -> Dict[str, Any]:
 def setup_logging(config: Dict[str, Any]):
     """
     配置日志系统
+    每次启动时创建一个带时间戳的新日志文件
 
     Args:
         config: 配置字典
@@ -44,10 +46,14 @@ def setup_logging(config: Dict[str, Any]):
     log_config = config.get("logging", {})
     log_level = log_config.get("level", "INFO")
     log_dir = log_config.get("log_dir", "logs")
-    log_file = log_config.get("log_file", "ai_companion.log")
+    log_file_prefix = log_config.get("log_file", "ai_companion").replace(".log", "")
 
     # 创建日志目录
     Path(log_dir).mkdir(parents=True, exist_ok=True)
+
+    # 生成带时间戳的日志文件名
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    log_file = f"{log_file_prefix}_{timestamp}.log"
 
     # 配置日志格式
     log_format = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
@@ -65,3 +71,4 @@ def setup_logging(config: Dict[str, Any]):
     )
 
     logging.info("日志系统初始化完成")
+    logging.info(f"日志文件: {os.path.join(log_dir, log_file)}")
