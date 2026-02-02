@@ -1,23 +1,29 @@
 # API配置
 api:
   api_key: "24574694451e4109a93b500d1af68688.pVBQOOdyF2sKfLTR"  
-  model: "glm-4.7"  
+  model: "glm-4.7-flash"  
   base_url: "https://open.bigmodel.cn/api/paas/v4/"
 
 # 短期记忆配置
 short_term_memory:
-  max_turns: 20  
+  max_turns: 20
+
+# 记忆系统配置
+memory_system:
+  type: "full"  # "simple" 或 "full" - simple仅使用短期记忆，full使用完整的三层记忆系统  
 
 # 对话配置
 chat:
   temperature: 0.7  # 温度参数，控制随机性
   max_tokens: 2000  # 最大生成token数
-  timeout: 30  # API请求超时时间(秒)
+  timeout: 60  # API请求超时时间(秒)
 
 # 提示文件路径
 prompts:
   system_prompt: "prompts/system_prompt.txt"
   user_prompt: "prompts/user_prompt.txt"
+  archive_agent: "memory/prompts/archive_agent_prompt.txt"
+  reorganize_agent: "memory/prompts/reorganize_agent_prompt.txt"
 
 # 日志配置
 logging:
@@ -29,3 +35,26 @@ logging:
 memory_retrieval:
   medium_term_count: 3  # 检索的中期记忆卡片数量
   long_term_count: 2    # 检索的长期记忆卡片数量
+
+# 向量数据库配置
+vector_db:
+  # 嵌入方式: "local" (本地模型) 或 "api" (API服务)
+  embedding_type: "api"
+  
+  # API嵌入配置（当embedding_type="api"时使用）
+  embedding_model: "embedding-2"  # 智谱AI的embedding模型
+  embedding_api_key: "24574694451e4109a93b500d1af68688.pVBQOOdyF2sKfLTR"  # 使用相同的API key
+  embedding_base_url: "https://open.bigmodel.cn/api/paas/v4/"
+  
+  # 本地嵌入配置（当embedding_type="local"时使用）
+  local_embedding_model: "shibing624/text2vec-base-chinese"  # 中文嵌入模型
+  
+  # ChromaDB配置
+  persistence_dir: "data/chromadb"  # ChromaDB持久化存储目录
+  collection_medium: "medium_term_memories"  # 中期记忆集合名称
+  collection_long: "long_term_memories"  # 长期记忆集合名称
+
+# 记忆流转配置
+memory_flow:
+  archive_interval_days: 7  # 中期记忆归档/重整间隔（天）
+

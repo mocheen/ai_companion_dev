@@ -103,3 +103,61 @@ class ZhipuClient:
         test_messages = [{"role": "user", "content": "你好"}]
         response = self.chat(test_messages, timeout=10)
         return response is not None
+
+    def get_embeddings(self, texts: List[str], model: str = "embedding-2",
+                      timeout: int = 30) -> Optional[List[List[float]]]:
+        """
+        获取文本的嵌入向量
+
+        Args:
+            texts: 文本列表
+            model: 嵌入模型名称
+            timeout: 超时时间(秒)
+
+        Returns:
+            嵌入向量列表，失败返回None
+        """
+        url = f"{self.base_url}embeddings"
+
+        try:
+            results = []
+            # 智谱API的embedding接口支持批量处理，一次最多处理100个文本
+            batch_size = 100
+            
+            for i in range(0, len(texts), batch_size):
+                batch_texts = texts[i:i + batch_size]
+                payload = {
+                    "model": model,
+                    "input": batch_texts
+                }
+
+                logger.debug(f"发送embedding请求到智谱API: {url}, 批次大小: {len(batch_texts)}")
+                response = requests.post(
+                    url,
+                    headers=self.headers,
+                    json=payload,
+                    timeout=timeout
+                )
+
+                response.raise_for_status()
+                result = response.json()
+
+                if "data" in result and len(result["data"]) > 0:
+                    for item in result["data"]:
+                        embedding = item["embedding"]
+                        results.append(embedding)
+                else:
+                    logger.error(f"Embedding API响应格式异常: {result}")
+                    return None
+
+            return results
+
+        except requests.exceptions.Timeout:
+            logger.error(f"请求超时 (>{timeout}秒)")
+            return None
+        except requests.exceptions.RequestException as e:
+            logger.error(f"请求失败: {e}")
+            return None
+        except Exception as e:
+            logger.error(f"未知错误: {e}")
+            return None

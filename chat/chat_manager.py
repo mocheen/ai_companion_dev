@@ -202,6 +202,7 @@ class ChatManager:
             return None
 
         logger.info(f"AI回复: {response}")
+        logger.debug(f"LLM完整返回: {response}")
 
         # 将对话记录提供给记忆系统
         if self.memory_system:

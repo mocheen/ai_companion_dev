@@ -7,7 +7,7 @@ import sys
 import logging
 from utils import load_config, setup_logging
 from chat import ChatManager
-from memory import SimpleMemorySystem
+from memory import SimpleMemorySystem, FullMemorySystem
 
 logger = logging.getLogger(__name__)
 
@@ -37,10 +37,20 @@ def main():
     # 创建对话管理器
     chat_manager = ChatManager(config)
 
-    # 创建记忆系统（使用简单版本）
-    short_term_config = config.get("short_term_memory", {})
-    max_turns = short_term_config.get("max_turns", 12)
-    memory_system = SimpleMemorySystem(max_turns=max_turns)
+    # 创建记忆系统
+    memory_config = config.get("memory_system", {})
+    memory_type = memory_config.get("type", "simple")
+
+    if memory_type == "full":
+        # 使用完整记忆系统（包含向量数据库和Agent）
+        logger.info("使用完整记忆系统")
+        memory_system = FullMemorySystem(config)
+    else:
+        # 使用简单记忆系统（仅短期记忆）
+        logger.info("使用简单记忆系统")
+        short_term_config = config.get("short_term_memory", {})
+        max_turns = short_term_config.get("max_turns", 12)
+        memory_system = SimpleMemorySystem(max_turns=max_turns)
 
     # 将记忆系统设置到对话管理器
     chat_manager.set_memory_system(memory_system)
@@ -61,7 +71,12 @@ def main():
     while True:
         try:
             # 获取用户输入
-            user_input = input("你: ").strip()
+            try:
+                user_input = input("你: ").strip()
+            except (EOFError, OSError, BrokenPipeError) as e:
+                logger.warning(f"输入流中断: {e}")
+                print("\n检测到输入流中断，程序将退出...")
+                break
 
             if not user_input:
                 continue
@@ -81,6 +96,10 @@ def main():
 
         except KeyboardInterrupt:
             print("\n\n再见！")
+            break
+        except BrokenPipeError:
+            logger.warning("检测到管道中断")
+            print("\n检测到管道中断，程序将退出...")
             break
         except Exception as e:
             logger.error(f"发生错误: {e}")

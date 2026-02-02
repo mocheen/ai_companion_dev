@@ -6,7 +6,19 @@ requests>=2.31.0
 # YAML配置文件解析
 PyYAML>=6.0.0
 
-# 后续可能需要的依赖（记忆系统开发时使用）
-# chromadb>=0.4.0
-# langchain>=0.1.0
+# 向量数据库
+chromadb>=0.4.0
+
+# LangChain框架
+langchain==0.1.20
+langchain-community>=0.0.10
+
+# 智谱AI SDK（用于LLM和Embedding API）
+zhipuai>=2.0.0
+
+# 本地向量嵌入模型（可选）
+# 如果在config.yaml中设置vector_db.embedding_type="local"，则需要取消下面的注释
 # sentence-transformers>=2.2.0
+
+# Web界面可视化工具
+streamlit>=1.53.1

@@ -82,11 +82,11 @@ class SimpleMemorySystem(MemorySystemBase):
 
     def get_long_term_memory(self, query: str) -> str:
         """获取长期记忆（简单版本返回空）"""
-        return ""
+        raise NotImplementedError("SimpleMemorySystem 不支持长期记忆功能，请使用 FullMemorySystem")
 
     def get_medium_term_memory(self, query: str) -> str:
         """获取中期记忆（简单版本返回空）"""
-        return ""
+        raise NotImplementedError("SimpleMemorySystem 不支持中期记忆功能，请使用 FullMemorySystem")
 
     def add_conversation(self, user_message: str, assistant_message: str):
         """
