@@ -35,7 +35,8 @@ class ZhipuClient:
     def chat(self, messages: List[Dict[str, str]],
              temperature: float = 0.7,
              max_tokens: int = 2000,
-             timeout: int = 30) -> Optional[str]:
+             timeout: int = 30,
+             tools: Optional[List[Dict[str, Any]]] = None) -> Optional[str]:
         """
         发送聊天请求
 
@@ -44,6 +45,7 @@ class ZhipuClient:
             temperature: 温度参数，控制随机性
             max_tokens: 最大生成token数
             timeout: 超时时间(秒)
+            tools: 工具列表，用于Function Calling（可选）
 
         Returns:
             模型返回的文本内容，失败返回None
@@ -57,9 +59,13 @@ class ZhipuClient:
             "max_tokens": max_tokens
         }
 
+        # 如果提供了tools参数，添加到payload中
+        if tools:
+            payload["tools"] = tools
+
         try:
+            # DEBUG级别记录详细请求信息
             logger.debug(f"发送请求到智谱API: {url}")
-            logger.debug(f"请求消息: {json.dumps(messages, ensure_ascii=False)}")
 
             response = requests.post(
                 url,
@@ -73,25 +79,33 @@ class ZhipuClient:
 
             # 提取返回的内容
             if "choices" in result and len(result["choices"]) > 0:
-                content = result["choices"][0]["message"]["content"]
-                logger.debug(f"API返回: {content}")
-                return content
+                message = result["choices"][0]["message"]
+                # 检查是否有tool_calls（Function Calling响应）
+                if "tool_calls" in message and message["tool_calls"]:
+                    # 返回tool_calls，让LangChain处理
+                    return message
+                # 否则返回普通的文本内容
+                elif "content" in message:
+                    return message["content"]
+                else:
+                    logger.warning(f"API响应消息缺少content和tool_calls: {message}")
+                    return None
             else:
                 logger.error(f"API响应格式异常: {result}")
                 return None
 
         except requests.exceptions.Timeout:
             logger.error(f"请求超时 (>{timeout}秒)")
-            return None
+            raise
         except requests.exceptions.RequestException as e:
             logger.error(f"请求失败: {e}")
-            return None
+            raise
         except json.JSONDecodeError as e:
             logger.error(f"JSON解析失败: {e}")
-            return None
+            raise
         except Exception as e:
             logger.error(f"未知错误: {e}")
-            return None
+            raise
 
     def test_connection(self) -> bool:
         """
@@ -121,9 +135,9 @@ class ZhipuClient:
 
         try:
             results = []
-            # 智谱API的embedding接口支持批量处理，一次最多处理100个文本
+            # 智��API的embedding接口支持批量处理，一次最多处理100个文本
             batch_size = 100
-            
+
             for i in range(0, len(texts), batch_size):
                 batch_texts = texts[i:i + batch_size]
                 payload = {
@@ -131,7 +145,6 @@ class ZhipuClient:
                     "input": batch_texts
                 }
 
-                logger.debug(f"发送embedding请求到智谱API: {url}, 批次大小: {len(batch_texts)}")
                 response = requests.post(
                     url,
                     headers=self.headers,
@@ -154,10 +167,10 @@ class ZhipuClient:
 
         except requests.exceptions.Timeout:
             logger.error(f"请求超时 (>{timeout}秒)")
-            return None
+            raise
         except requests.exceptions.RequestException as e:
             logger.error(f"请求失败: {e}")
-            return None
+            raise
         except Exception as e:
             logger.error(f"未知错误: {e}")
-            return None
+            raise

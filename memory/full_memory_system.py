@@ -7,7 +7,9 @@ import os
 import json
 import logging
 import uuid
+import atexit
 import asyncio
+import time
 from datetime import datetime, timedelta
 from typing import List, Optional, Dict, Any
 from threading import Thread, Lock
@@ -15,7 +17,12 @@ from threading import Thread, Lock
 from langchain.agents import initialize_agent, AgentType
 from langchain.tools import Tool
 from langchain.llms.base import LLM
-from langchain.schema import Generation, LLMResult
+from langchain.schema import (
+    Generation, LLMResult, BaseMessage, AIMessage, HumanMessage,
+    ChatResult, ChatGeneration
+)
+from langchain.chat_models.base import BaseChatModel
+from langchain.callbacks.manager import CallbackManagerForLLMRun
 
 from memory.memory_base import MemorySystemBase
 from memory.memory_models import (
@@ -43,8 +50,8 @@ class ChatMessage:
 logger = logging.getLogger(__name__)
 
 
-class ZhipuLLM(LLM):
-    """智谱API的LangChain LLM封装"""
+class ZhipuLLM(BaseChatModel):
+    """智谱API的LangChain ChatModel封装，支持Function Calling"""
 
     client: ZhipuClient = None
     temperature: float = 0.7
@@ -54,20 +61,72 @@ class ZhipuLLM(LLM):
     def _llm_type(self) -> str:
         return "zhipu"
 
-    def _call(self, prompt: str, stop: Optional[List[str]] = None) -> str:
-        """调用LLM"""
-        messages = [{"role": "user", "content": prompt}]
-        response = self.client.chat(
-            messages=messages,
-            temperature=self.temperature,
-            max_tokens=self.max_tokens
-        )
+    def _generate(
+        self,
+        messages: List[BaseMessage],
+        stop: Optional[List[str]] = None,
+        run_manager: Optional[CallbackManagerForLLMRun] = None,
+        **kwargs: Any,
+    ) -> ChatResult:
+        """生成聊天响应"""
+        # 转换消息格式
+        api_messages = []
+        for msg in messages:
+            if isinstance(msg, HumanMessage):
+                api_messages.append({"role": "user", "content": msg.content})
+            elif isinstance(msg, AIMessage):
+                api_messages.append({"role": "assistant", "content": msg.content})
+            else:
+                # 其他类型（如SystemMessage）
+                api_messages.append({"role": "system", "content": msg.content})
 
-        # 记录debug日志
-        logger.debug(f"LLM输入: {prompt}")
-        logger.debug(f"LLM返回: {response}")
+        # 构建调用参数
+        chat_params = {
+            "messages": api_messages,
+            "temperature": self.temperature,
+            "max_tokens": self.max_tokens
+        }
 
-        return response or ""
+        # 从kwargs���提取tools参数
+        if "tools" in kwargs:
+            chat_params["tools"] = kwargs["tools"]
+            logger.debug(f"ZhipuLLM: 传递tools参数，工具数量: {len(kwargs['tools'])}")
+
+        response = self.client.chat(**chat_params)
+
+        # 调试日志：记录响应类型
+        if isinstance(response, dict):
+            logger.debug(f"ZhipuLLM: 收到Function Calling响应，content={response.get('content', '')[:50]}, tool_calls数量={len(response.get('tool_calls', []))}")
+        elif isinstance(response, str):
+            logger.debug(f"ZhipuLLM: 收到文本响应，内容={response[:100]}")
+        else:
+            logger.debug(f"ZhipuLLM: 收到None响应")
+
+        # 返回ChatResult
+        return ChatResult(generations=[self._convert_response_to_generation(response)])
+
+    def _convert_response_to_generation(self, response: Any) -> ChatGeneration:
+        """将API响应转换为LangChain ChatGeneration格式"""
+        if response is None:
+            return ChatGeneration(message=AIMessage(content=""))
+
+        # 如果响应是字符串（普通聊天）
+        if isinstance(response, str):
+            return ChatGeneration(message=AIMessage(content=response))
+
+        # 如果响应是字典（包含tool_calls的Function Calling响应）
+        if isinstance(response, dict):
+            # 对于Function Calling，创建包含tool_calls的AIMessage
+            tool_calls = response.get("tool_calls", [])
+            return ChatGeneration(
+                message=AIMessage(
+                    content=response.get("content", ""),
+                    additional_kwargs={"tool_calls": tool_calls}
+                )
+            )
+
+        # 默认返回空消息
+        return ChatGeneration(message=AIMessage(content=""))
 
 
 class FullMemorySystem(MemorySystemBase):
@@ -87,8 +146,10 @@ class FullMemorySystem(MemorySystemBase):
 
         # 短期记忆配置
         short_term_config = config.get("short_term_memory", {})
-        self.max_turns = short_term_config.get("max_turns", 20)
-        self.max_messages = self.max_turns * 2
+        self.max_messages = short_term_config.get("max_turns", 20)
+
+        # 短期记忆持久化文件路径
+        self.persist_file = short_term_config.get("persist_file", "data/short_term_memory.json")
 
         # 短期记忆队列
         self.short_term_memory: List[ShortTermMessage] = []
@@ -109,7 +170,50 @@ class FullMemorySystem(MemorySystemBase):
         self.medium_term_count = retrieval_config.get("medium_term_count", 3)
         self.long_term_count = retrieval_config.get("long_term_count", 2)
 
+        # 加载短期记忆
+        self._load_short_term_memory()
+
+        # 检查是否需要归档（启动时）
+        if len(self.short_term_memory) >= self.max_messages:
+            logger.info(f"短期记忆已达到上限（{len(self.short_term_memory)}/{self.max_messages}），触发归档流程")
+            self._trigger_archive_async()
+
+        # 注册退出时保存
+        atexit.register(self._save_short_term_memory)
+
         logger.info("完整记忆系统初始化完成")
+
+    def _load_short_term_memory(self):
+        """从文件加载短期记忆"""
+        if not os.path.exists(self.persist_file):
+            logger.info(f"短期记忆文件不存在: {self.persist_file}")
+            return
+
+        try:
+            with open(self.persist_file, "r", encoding="utf-8") as f:
+                data = json.load(f)
+
+            self.short_term_memory = [ShortTermMessage.from_dict(msg) for msg in data]
+            logger.info(f"已加载 {len(self.short_term_memory)} 条短期记忆")
+
+        except Exception as e:
+            logger.error(f"加载短期记忆失败: {e}", exc_info=True)
+            self.short_term_memory = []
+
+    def _save_short_term_memory(self):
+        """保存短期记忆到文件"""
+        try:
+            os.makedirs(os.path.dirname(self.persist_file), exist_ok=True)
+
+            data = [msg.to_dict() for msg in self.short_term_memory]
+
+            with open(self.persist_file, "w", encoding="utf-8") as f:
+                json.dump(data, f, ensure_ascii=False, indent=2)
+
+            logger.debug(f"已保存 {len(self.short_term_memory)} 条短期记忆到 {self.persist_file}")
+
+        except Exception as e:
+            logger.error(f"保存短期记忆失败: {e}", exc_info=True)
 
     def get_short_term_memory(self) -> List[ChatMessage]:
         """获取短期记忆"""
@@ -220,7 +324,7 @@ class FullMemorySystem(MemorySystemBase):
     def _archive_short_term_memory(self):
         """
         归档短期记忆为中期记忆
-        使用LangChain Agent
+        使用LangChain Agent，支持API速率限制时的自动重试
         """
         logger.info("开始归档短期记忆")
 
@@ -247,9 +351,33 @@ class FullMemorySystem(MemorySystemBase):
             handle_parsing_errors=True
         )
 
-        # 执行Agent
-        result = agent.run(agent_prompt)
-        logger.info(f"归档Agent执行完成: {result}")
+        # 带重试机制的执行
+        max_retries = 3
+        base_delay = 5  # 秒
+
+        for attempt in range(max_retries):
+            try:
+                result = agent.run(agent_prompt)
+                logger.info(f"归档Agent执行完成: {result}")
+                break  # 成功，跳出重试循环
+
+            except Exception as e:
+                # 判断是否为速率限制错误
+                error_str = str(e)
+                is_rate_limit = "429" in error_str or "Too Many Requests" in error_str
+
+                if is_rate_limit and attempt < max_retries - 1:
+                    # 指数退避：5秒、10秒、20秒
+                    delay = base_delay * (2 ** attempt)
+                    logger.warning(
+                        f"遇到API速率限制（第{attempt + 1}次尝试），"
+                        f"{delay}秒后重试... 错误: {e}"
+                    )
+                    time.sleep(delay)
+                else:
+                    # 非速率限制错误，或已达最大重试次数
+                    logger.error(f"归档失败: {e}")
+                    raise
 
         # Agent执行成功后，根据标记删除已归档的消息
         self._clean_archived_messages()
@@ -283,6 +411,9 @@ class FullMemorySystem(MemorySystemBase):
 
             removed_count = original_count - len(self.short_term_memory)
             logger.info(f"清理已归档消息: 删除了{removed_count}条，保留了{len(self.short_term_memory)}条")
+
+            # 保存清理后的短期记忆
+            self._save_short_term_memory()
 
     def _create_archive_tools(self) -> List[Tool]:
         """创建归档Agent的工具集"""

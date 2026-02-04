@@ -3,9 +3,15 @@
 定义记忆系统的接口，具体实现可以后续开发
 """
 
+import os
+import json
+import atexit
+import logging
 from abc import ABC, abstractmethod
 from typing import List, Optional
 from chat.chat_manager import ChatMessage
+
+logger = logging.getLogger(__name__)
 
 
 class MemorySystemBase(ABC):
@@ -66,15 +72,59 @@ class SimpleMemorySystem(MemorySystemBase):
     用于初期测试和开发
     """
 
-    def __init__(self, max_turns: int = 12):
+    def __init__(self, max_turns: int = 12, persist_file: str = "data/short_term_memory.json"):
         """
         初始化简单记忆系统
 
         Args:
             max_turns: 最大保存对话轮数
+            persist_file: 持久化文件路径
         """
         self.max_turns = max_turns
+        self.persist_file = persist_file
         self.conversations: List[ChatMessage] = []
+
+        self._load_short_term_memory()
+        atexit.register(self._save_short_term_memory)
+
+    def _load_short_term_memory(self):
+        """从文件加载短期记忆"""
+        if not os.path.exists(self.persist_file):
+            logger.info(f"短期记忆文件不存在: {self.persist_file}")
+            return
+
+        try:
+            with open(self.persist_file, "r", encoding="utf-8") as f:
+                data = json.load(f)
+
+            self.conversations = [ChatMessage.from_dict(msg) for msg in data]
+            logger.info(f"已加载 {len(self.conversations)} 条短期记忆")
+
+        except Exception as e:
+            logger.error(f"加载短期记忆失败: {e}", exc_info=True)
+            self.conversations = []
+
+    def _save_short_term_memory(self):
+        """保存短期记忆到文件"""
+        try:
+            os.makedirs(os.path.dirname(self.persist_file), exist_ok=True)
+
+            data = []
+            for msg in self.conversations:
+                msg_dict = {
+                    "role": msg.role,
+                    "content": msg.content,
+                    "timestamp": msg.timestamp.isoformat() if msg.timestamp else None
+                }
+                data.append(msg_dict)
+
+            with open(self.persist_file, "w", encoding="utf-8") as f:
+                json.dump(data, f, ensure_ascii=False, indent=2)
+
+            logger.debug(f"已保存 {len(self.conversations)} 条短期记忆到 {self.persist_file}")
+
+        except Exception as e:
+            logger.error(f"保存短期记忆失败: {e}", exc_info=True)
 
     def get_short_term_memory(self) -> List[ChatMessage]:
         """获取短期记忆"""

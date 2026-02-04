@@ -50,7 +50,8 @@ def main():
         logger.info("使用简单记忆系统")
         short_term_config = config.get("short_term_memory", {})
         max_turns = short_term_config.get("max_turns", 12)
-        memory_system = SimpleMemorySystem(max_turns=max_turns)
+        persist_file = short_term_config.get("persist_file", "data/short_term_memory.json")
+        memory_system = SimpleMemorySystem(max_turns=max_turns, persist_file=persist_file)
 
     # 将记忆系统设置到对话管理器
     chat_manager.set_memory_system(memory_system)

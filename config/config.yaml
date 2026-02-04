@@ -7,6 +7,7 @@ api:
 # 短期记忆配置
 short_term_memory:
   max_turns: 20
+  persist_file: "data/short_term_memory.json"  # 短期记忆持久化文件路径
 
 # 记忆系统配置
 memory_system:

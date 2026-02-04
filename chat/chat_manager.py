@@ -32,6 +32,18 @@ class ChatMessage:
         """转换为字典格式，用于API调用"""
         return {"role": self.role, "content": self.content}
 
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> 'ChatMessage':
+        """从字典创建实例"""
+        timestamp = None
+        if data.get("timestamp"):
+            timestamp = datetime.fromisoformat(data["timestamp"])
+        return cls(
+            role=data["role"],
+            content=data["content"],
+            timestamp=timestamp
+        )
+
     def __str__(self) -> str:
         """格式化输出"""
         time_str = self.timestamp.strftime("%H:%M:%S")
@@ -201,10 +213,11 @@ class ChatManager:
             logger.error("AI回复失败")
             return None
 
-        logger.info(f"AI回复: {response}")
-        logger.debug(f"LLM完整返回: {response}")
+        # 只在INFO级别显示摘要（前100字符）
+        response_preview = response[:100] + "..." if len(response) > 100 else response
+        logger.info(f"AI回复: {response_preview}")
 
-        # 将对话记录提供给记忆系统
+        # 将��话记录提供给记忆系统
         if self.memory_system:
             self.memory_system.add_conversation(user_message, response)
 
