@@ -1,8 +1,15 @@
 # API配置
 api:
-  api_key: "24574694451e4109a93b500d1af68688.pVBQOOdyF2sKfLTR"  
-  model: "glm-4.7-flash"  
+  api_key: "24574694451e4109a93b500d1af68688.pVBQOOdyF2sKfLTR"
+  model: "glm-4.7"
   base_url: "https://open.bigmodel.cn/api/paas/v4/"
+
+# Agent专用API配置（用于记忆归档和重整的自主代理）
+agent_api:
+  api_key: "24574694451e4109a93b500d1af68688.pVBQOOdyF2sKfLTR"
+  model: "glm-4.7"
+  base_url: "https://open.bigmodel.cn/api/paas/v4/"
+  tool_choice: "auto"  
 
 # 短期记忆配置
 short_term_memory:

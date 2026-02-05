@@ -14,6 +14,7 @@ from datetime import datetime, timedelta
 from typing import List, Optional, Dict, Any
 from threading import Thread, Lock
 
+from langchain.pydantic_v1 import BaseModel, Field
 from langchain.agents import initialize_agent, AgentType
 from langchain.tools import Tool
 from langchain.llms.base import LLM
@@ -56,6 +57,7 @@ class ZhipuLLM(BaseChatModel):
     client: ZhipuClient = None
     temperature: float = 0.7
     max_tokens: int = 2000
+    tool_choice: Optional[str] = None  # 工具选择策略
 
     @property
     def _llm_type(self) -> str:
@@ -69,6 +71,9 @@ class ZhipuLLM(BaseChatModel):
         **kwargs: Any,
     ) -> ChatResult:
         """生成聊天响应"""
+        # 调试：打印所有kwargs
+        logger.debug(f"ZhipuLLM._generate called with kwargs keys: {list(kwargs.keys())}")
+
         # 转换消息格式
         api_messages = []
         for msg in messages:
@@ -87,10 +92,34 @@ class ZhipuLLM(BaseChatModel):
             "max_tokens": self.max_tokens
         }
 
-        # 从kwargs���提取tools参数
-        if "tools" in kwargs:
+        # LangChain的OPENAI_FUNCTIONS Agent使用functions参数
+        # 需要将其转换为智谱API期望的tools格式
+        if "functions" in kwargs:
+            functions = kwargs["functions"]
+            logger.info(f"ZhipuLLM: 发现functions参数！函数数量: {len(functions)}")
+
+            # 将OpenAI的functions格式转换为智谱的tools格式
+            tools = []
+            for func in functions:
+                tools.append({
+                    "type": "function",
+                    "function": func
+                })
+
+            chat_params["tools"] = tools
+            if self.tool_choice:
+                chat_params["tool_choice"] = self.tool_choice
+
+            logger.info(f"ZhipuLLM: 转换为tools格式，工具数量: {len(tools)}, tool_choice={self.tool_choice}")
+
+        # 如果直接传递tools参数（新版本的LangChain）
+        elif "tools" in kwargs:
             chat_params["tools"] = kwargs["tools"]
-            logger.debug(f"ZhipuLLM: 传递tools参数，工具数量: {len(kwargs['tools'])}")
+            if self.tool_choice:
+                chat_params["tool_choice"] = self.tool_choice
+            logger.info(f"ZhipuLLM: 发现tools参数！工具数量: {len(kwargs['tools'])}, tool_choice={self.tool_choice}")
+        else:
+            logger.warning(f"ZhipuLLM: kwargs中没有functions或tools参数！所有kwargs keys: {list(kwargs.keys())}")    
 
         response = self.client.chat(**chat_params)
 
@@ -129,6 +158,22 @@ class ZhipuLLM(BaseChatModel):
         return ChatGeneration(message=AIMessage(content=""))
 
 
+# ====== Agent工具的Pydantic Schema定义 ======
+
+class SplitTopicsInput(BaseModel):
+    """split_topics工具的参数schema"""
+    topic_end_ids: List[str] = Field(
+        description="每个话题最后一条消息的ID列表"
+    )
+
+
+class CreateMemoryCardInput(BaseModel):
+    """create_memory_card工具的参数schema"""
+    cards_json: str = Field(
+        description="包含记忆卡片字段的JSON字符串或JSON列表字符串"
+    )
+
+
 class FullMemorySystem(MemorySystemBase):
     """
     完整的记忆系统实现
@@ -157,13 +202,27 @@ class FullMemorySystem(MemorySystemBase):
         # 初始化向量数据库
         self.vector_store = VectorStore(config)
 
-        # 初始化LLM客户端（用于Agent）
+        # 初始化LLM客户端（用于普通对话）
         api_config = config.get("api", {})
         self.zhipu_client = ZhipuClient(
             api_key=api_config.get("api_key", ""),
             model=api_config.get("model", "glm-4-flash"),
             base_url=api_config.get("base_url", "https://open.bigmodel.cn/api/paas/v4/")
         )
+
+        # 初始化Agent专用的LLM客户端（用于记忆归档和重整，支持Function Calling）
+        agent_api_config = config.get("agent_api", {})
+        # 如果没有配置agent_api，则使用普通api配置
+        if not agent_api_config:
+            logger.warning("未配置agent_api，将使用普通api配置（可能不支持Function Calling）")
+            agent_api_config = api_config
+
+        self.agent_zhipu_client = ZhipuClient(
+            api_key=agent_api_config.get("api_key", api_config.get("api_key", "")),
+            model=agent_api_config.get("model", api_config.get("model", "glm-4-flash")),
+            base_url=agent_api_config.get("base_url", api_config.get("base_url", "https://open.bigmodel.cn/api/paas/v4/"))
+        )
+        self.agent_tool_choice = agent_api_config.get("tool_choice", "auto")
 
         # 记忆检索配置
         retrieval_config = config.get("memory_retrieval", {})
@@ -339,8 +398,13 @@ class FullMemorySystem(MemorySystemBase):
         # 定义工具
         tools = self._create_archive_tools()
 
-        # 初始化LLM
-        llm = ZhipuLLM(client=self.zhipu_client, temperature=0.3)
+        # 初始化LLM（使用Agent专用的客户端和tool_choice配置）
+        llm = ZhipuLLM(
+            client=self.agent_zhipu_client,
+            temperature=0.3,
+            tool_choice=self.agent_tool_choice
+        )
+        logger.info(f"初始化归档Agent，使用模型: {self.agent_zhipu_client.model}, tool_choice: {self.agent_tool_choice}")
 
         # 初始化Agent
         agent = initialize_agent(
@@ -505,12 +569,14 @@ class FullMemorySystem(MemorySystemBase):
             Tool(
                 name="split_topics",
                 func=split_topics_func,
-                description="根据语义将对话分割为多个话题。传入每个话题最后一条消息的ID列表。系统会在这些消息上设置话题结束标记，不会删除任何消息。等Agent完成所有任务后，程序会自动根据标记清理已归档的���息。"
+                description="根据语义将对话分割为多个话题。传入每个话题最后一条消息的ID列表。系统会在这些消息上设置话题结束标记，不会删除任何消息。等Agent完成所有任务后，程序会自动根据标记清理已归档的消息。",
+                args_schema=SplitTopicsInput
             ),
             Tool(
                 name="create_memory_card",
                 func=create_memory_card_func,
-                description="为话题创建中期记忆卡片。传入包含记忆卡片字段的JSON或JSON列表。注意：只需要为除最后一个话题外的所有话题创建记忆卡片。"
+                description="为话题创建中期记忆卡片。传入包含记忆卡片字段的JSON或JSON列表。注意：只需要为除最后一个话题外的所有话题创建记忆卡片。",
+                args_schema=CreateMemoryCardInput
             )
         ]
 
@@ -532,8 +598,13 @@ class FullMemorySystem(MemorySystemBase):
         # 定义工具
         tools = self._create_reorganize_tools()
 
-        # 初始化LLM
-        llm = ZhipuLLM(client=self.zhipu_client, temperature=0.3)
+        # 初始化LLM（使用Agent专用的客户端和tool_choice配置）
+        llm = ZhipuLLM(
+            client=self.agent_zhipu_client,
+            temperature=0.3,
+            tool_choice=self.agent_tool_choice
+        )
+        logger.info(f"初始化重整Agent，使用模型: {self.agent_zhipu_client.model}, tool_choice: {self.agent_tool_choice}")
 
         # 初始化Agent
         agent = initialize_agent(
