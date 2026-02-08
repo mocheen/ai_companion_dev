@@ -9,11 +9,8 @@ PyYAML>=6.0.0
 # 向量数据库
 chromadb>=0.4.0
 
-# LangChain框架
-langchain==0.1.20
-langchain-community>=0.0.10
-
 # 智谱AI SDK（用于LLM和Embedding API）
+# 注意：我们使用自己封装的LLM客户端，这个SDK仅用于可选的额外功能
 zhipuai>=2.0.0
 
 # 本地向量嵌入模型（可选）
