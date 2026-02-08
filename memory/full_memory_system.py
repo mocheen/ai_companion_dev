@@ -298,28 +298,30 @@ class FullMemorySystem(MemorySystemBase):
         # 带重试机制的执行
         max_retries = 3
         base_delay = 5  # 秒
+        archive_timeout = 180  # 归档任务超时时间（3分钟）
 
         for attempt in range(max_retries):
             try:
-                result = agent.run("请开始归档短期记忆", tool_choice=self.agent_tool_choice)
+                result = agent.run("请开始归档短期记忆", tool_choice=self.agent_tool_choice, timeout=archive_timeout)
                 logger.info(f"归档Agent执行完成: {result}")
                 break  # 成功，跳出重试循环
 
             except Exception as e:
-                # 判断是否为速率限制错误
+                # 判断是否为速率限制错误或超时错误
                 error_str = str(e)
                 is_rate_limit = "429" in error_str or "Too Many Requests" in error_str
+                is_timeout = "timeout" in error_str.lower() or "timed out" in error_str.lower()
 
-                if is_rate_limit and attempt < max_retries - 1:
+                if (is_rate_limit or is_timeout) and attempt < max_retries - 1:
                     # 指数退避：5秒、10秒、20秒
                     delay = base_delay * (2 ** attempt)
                     logger.warning(
-                        f"遇到API速率限制（第{attempt + 1}次尝试），"
+                        f"遇到API{'速率限制' if is_rate_limit else '超时'}（第{attempt + 1}次尝试），"
                         f"{delay}秒后重试... 错误: {e}"
                     )
                     time.sleep(delay)
                 else:
-                    # 非速率限制错误，或已达最大重试次数
+                    # 非速率限制/超时错误，或已达最大重试次数
                     logger.error(f"归档失败: {e}")
                     raise
 
@@ -330,8 +332,16 @@ class FullMemorySystem(MemorySystemBase):
         """注册归档Agent的工具集"""
 
         def get_short_term_memory_func() -> str:
-            """获取短期记忆"""
+            """获取短期记忆（限制数量以避免超时）"""
             memories = self.get_short_term_memory()
+            
+            # 限制返回的记忆数量，避免一次性发送太多内容导致超时
+            # 最多返回最近50条记忆，如果超过则只返回最近的
+            max_memories = 50
+            if len(memories) > max_memories:
+                logger.warning(f"短期记忆数量({len(memories)})超过限制({max_memories})，只返回最近的{max_memories}条")
+                memories = memories[-max_memories:]
+            
             result = []
             for msg in memories:
                 result.append({
@@ -378,20 +388,40 @@ class FullMemorySystem(MemorySystemBase):
                     cards_data = [cards_data]
 
                 created_ids = []
-                for card_data in cards_data:
-                    memory = MediumTermMemory(
-                        topic_summary=card_data["topic_summary"],
-                        key_points=card_data["key_points"],
-                        topic_tags=card_data.get("topic_tags", []),
-                        importance_score=card_data.get("importance_score", 0.5),
-                        emotion=EmotionType(card_data.get("emotion", "neutral")),
-                        dialogue_type=DialogueType(card_data.get("dialogue_type", "casual")),
-                        source_message_ids=card_data.get("source_message_ids", [])
-                    )
+                if len(cards_data) > 1:
+                    # 使用批量处理，避免触发速率限制
+                    memories = []
+                    for card_data in cards_data:
+                        memory = MediumTermMemory(
+                            topic_summary=card_data["topic_summary"],
+                            key_points=card_data["key_points"],
+                            topic_tags=card_data.get("topic_tags", []),
+                            importance_score=card_data.get("importance_score", 0.5),
+                            emotion=EmotionType(card_data.get("emotion", "neutral")),
+                            dialogue_type=DialogueType(card_data.get("dialogue_type", "casual")),
+                            source_message_ids=card_data.get("source_message_ids", [])
+                        )
+                        memories.append(memory)
+                    
+                    created_ids = self.vector_store.add_medium_term_memories_batch(memories)
+                    for memory in memories:
+                        logger.info(f"创建中期记忆: {memory.topic_summary[:50]}...")
+                else:
+                    # 单个记忆，使用普通方法
+                    for card_data in cards_data:
+                        memory = MediumTermMemory(
+                            topic_summary=card_data["topic_summary"],
+                            key_points=card_data["key_points"],
+                            topic_tags=card_data.get("topic_tags", []),
+                            importance_score=card_data.get("importance_score", 0.5),
+                            emotion=EmotionType(card_data.get("emotion", "neutral")),
+                            dialogue_type=DialogueType(card_data.get("dialogue_type", "casual")),
+                            source_message_ids=card_data.get("source_message_ids", [])
+                        )
 
-                    memory_id = self.vector_store.add_medium_term_memory(memory)
-                    created_ids.append(memory_id)
-                    logger.info(f"创建中期记忆: {memory.topic_summary[:50]}...")
+                        memory_id = self.vector_store.add_medium_term_memory(memory)
+                        created_ids.append(memory_id)
+                        logger.info(f"创建中期记忆: {memory.topic_summary[:50]}...")
 
                 return json.dumps({
                     "status": "success",

@@ -50,8 +50,8 @@ vector_db:
   embedding_type: "api"
   
   # API嵌入配置（当embedding_type="api"时使用）
-  embedding_model: "embedding-2"  # 智谱AI的embedding模型
-  embedding_api_key: "24574694451e4109a93b500d1af68688.pVBQOOdyF2sKfLTR"  # 使用相同的API key
+  embedding_model: "embedding-3"  # 智谱AI的embedding模型
+  embedding_api_key: "24574694451e4109a93b500d1af68688.pVBQOOdyF2sKfLTR"  
   embedding_base_url: "https://open.bigmodel.cn/api/paas/v4/"
   
   # 本地嵌入配置（当embedding_type="local"时使用）

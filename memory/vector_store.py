@@ -126,6 +126,30 @@ class VectorStore:
             # 使用本地模型
             return self.embedding_model.encode(text).tolist()
 
+    def _encode_texts_batch(self, texts: List[str]) -> List[List[float]]:
+        """
+        批量将文本编码为向量（推荐使用，避免触发速率限制）
+
+        Args:
+            texts: 输入文本列表
+
+        Returns:
+            向量表示列表
+
+        Raises:
+            Exception: 当向量编码失败时抛出异常
+        """
+        if self.embedding_type == "api":
+            # 使用智谱AI的embedding API，支持批量处理（最多64条）
+            embeddings = self.zhipu_client.get_embeddings(texts, model=self.embedding_model_name)
+            if embeddings and len(embeddings) > 0:
+                return embeddings
+            else:
+                raise ValueError(f"获取embedding返回空，文本数量: {len(texts)}")
+        else:
+            # 使用本地模型
+            return [self.embedding_model.encode(text).tolist() for text in texts]
+
     def add_medium_term_memory(self, memory: MediumTermMemory) -> str:
         """
         添加中期记忆
@@ -157,6 +181,55 @@ class VectorStore:
 
         logger.debug(f"添加中期记忆: {memory_id} - {memory.topic_summary[:50]}...")
         return memory_id
+
+    def add_medium_term_memories_batch(self, memories: List[MediumTermMemory]) -> List[str]:
+        """
+        批量添加中期记忆（推荐使用，避免触发速率限制）
+
+        Args:
+            memories: 中期记忆对象列表
+
+        Returns:
+            记忆ID列表
+
+        Raises:
+            Exception: 当向量编码失败时抛出异常
+        """
+        if not memories:
+            return []
+        
+        memory_ids = [str(uuid.uuid4()) for _ in memories]
+        texts = [memory.to_search_text() for memory in memories]
+        
+        # 批量获取embeddings（一次API调用）
+        embeddings = self._encode_texts_batch(texts)
+        
+        # 批量添加到向量数据库
+        ids_list = []
+        embeddings_list = []
+        documents_list = []
+        metadatas_list = []
+        
+        for i, memory in enumerate(memories):
+            ids_list.append(memory_ids[i])
+            embeddings_list.append(embeddings[i])
+            documents_list.append(texts[i])
+            metadatas_list.append({
+                "type": "medium",
+                "created_at": memory.created_at.isoformat(),
+                "importance_score": memory.importance_score,
+                "data": json.dumps(memory.to_dict(), ensure_ascii=False)
+            })
+        
+        self.collection_medium.add(
+            ids=ids_list,
+            embeddings=embeddings_list,
+            documents=documents_list,
+            metadatas=metadatas_list
+        )
+        
+        logger.debug(f"批量添加中期记忆: {len(memories)}条")
+        return memory_ids
 
     def add_long_term_memory(self, memory: LongTermMemory) -> str:
         """

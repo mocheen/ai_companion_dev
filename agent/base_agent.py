@@ -47,13 +47,14 @@ class BaseAgent:
         if system_prompt:
             self.messages.append(Message(role=MessageRole.SYSTEM, content=system_prompt))
 
-    def run(self, user_input: str, tool_choice: str = "auto") -> str:
+    def run(self, user_input: str, tool_choice: str = "auto", timeout: int = 60) -> str:
         """
         运行Agent
 
         Args:
             user_input: 用户输入
             tool_choice: 工具选择策略（auto、any、none等）
+            timeout: 请求超时时间（秒）
 
         Returns:
             Agent的最终回复
@@ -69,7 +70,8 @@ class BaseAgent:
             request = LLMRequest(
                 messages=self.messages.copy(),
                 tools=self.tool_executor.get_tools_for_llm(),
-                tool_choice=tool_choice
+                tool_choice=tool_choice,
+                timeout=timeout
             )
 
             # 调用LLM
