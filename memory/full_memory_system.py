@@ -126,20 +126,6 @@ class FullMemorySystem(MemorySystemBase):
             self.short_term_memory = [ShortTermMessage.from_dict(msg) for msg in data]
             logger.info(f"已加载 {len(self.short_term_memory)} 条短期记忆")
 
-            # 调试日志：检查加载的消息对象
-            logger.debug("=== 短期记忆加载调试信息 ===")
-            for i, msg in enumerate(self.short_term_memory, 1):
-                logger.debug(f"消息 {i}:")
-                logger.debug(f"  - 对象类型: {type(msg)}")
-                logger.debug(f"  - __dict__: {msg.__dict__}")
-                logger.debug(f"  - hasattr(message_id): {hasattr(msg, 'message_id')}")
-                if hasattr(msg, 'message_id'):
-                    logger.debug(f"  - message_id值: {msg.message_id}")
-                else:
-                    logger.debug(f"  - message_id属性不存在!")
-                logger.debug(f"  - getattr(message_id, 'unknown'): {getattr(msg, 'message_id', 'unknown')}")
-            logger.debug("=== 调试信息结束 ===")
-
         except Exception as e:
             logger.error(f"加载短期记忆失败: {e}", exc_info=True)
             self.short_term_memory = []
@@ -540,9 +526,39 @@ class FullMemorySystem(MemorySystemBase):
 
         logger.info(f"初始化重整Agent，使用模型: {self.agent_llm.model}, tool_choice: {self.agent_tool_choice}")
 
-        # 执行Agent
-        result = agent.run("请开始重整中期记忆", tool_choice=self.agent_tool_choice)
-        logger.info(f"重整完成: {result}")
+        # 带重试机制的执行（与归档Agent保持一致）
+        max_retries = 3
+        base_delay = 5  # 秒
+        reorganize_timeout = 300  # 重整任务超时时间（5分钟，比归档更长）
+
+        for attempt in range(max_retries):
+            try:
+                result = agent.run("请开始重整中期记忆", tool_choice=self.agent_tool_choice, timeout=reorganize_timeout)
+                logger.info(f"重整Agent执行完成: {result}")
+                break  # 成功，跳出重试循环
+
+            except Exception as e:
+                # 判断是否为速率限制错误或超时错误
+                error_str = str(e)
+                is_rate_limit = "429" in error_str or "Too Many Requests" in error_str
+                is_timeout = "timeout" in error_str.lower() or "timed out" in error_str.lower()
+
+                if (is_rate_limit or is_timeout) and attempt < max_retries - 1:
+                    # 指数退避：5秒、10秒、20秒
+                    delay = base_delay * (2 ** attempt)
+                    logger.warning(
+                        f"遇到API{'速率限制' if is_rate_limit else '超时'}（第{attempt + 1}次尝试），"
+                        f"{delay}秒后重试... 错误: {e}"
+                    )
+                    time.sleep(delay)
+                else:
+                    # 非速率限制/超时错误，或已达最大重试次数
+                    logger.error(f"重整失败: {e}")
+                    raise
+
+        # TODO: 可以添加重整后的验证逻辑
+        # self._verify_reorganization_result()
+        logger.info("中期记忆重整流程完成")
 
     def _register_reorganize_tools(self, tool_executor: ToolExecutor):
         """注册重整Agent的工具集"""
@@ -551,9 +567,19 @@ class FullMemorySystem(MemorySystemBase):
             days: Optional[int] = None,
             older_than_days: Optional[int] = None,
             min_importance: Optional[float] = None,
-            max_importance: Optional[float] = None
+            max_importance: Optional[float] = None,
+            limit: Optional[int] = None
         ) -> str:
-            """获取中期记忆"""
+            """
+            获取中期记忆
+
+            Args:
+                days: 获取最近N天创建的记忆
+                older_than_days: 获取N天之前创建的记忆
+                min_importance: 最小重要性评分
+                max_importance: 最大重要性评分
+                limit: 最多返回的记忆数量（默认100，避免超时）
+            """
             memories = self.vector_store.get_all_medium_term_memories()
 
             # 应用过滤条件
@@ -585,6 +611,12 @@ class FullMemorySystem(MemorySystemBase):
                     "id": mem["id"],
                     "data": data
                 })
+
+            # 应用数量限制（避免返回太多数据导致超时）
+            max_memories = limit or 100  # 默认最多100条
+            if len(filtered) > max_memories:
+                logger.warning(f"中期记忆过滤后数量({len(filtered)})超过限制({max_memories})，只返回最近的{max_memories}条")
+                filtered = filtered[:max_memories]
 
             return json.dumps(filtered, ensure_ascii=False, indent=2)
 
@@ -676,15 +708,37 @@ class FullMemorySystem(MemorySystemBase):
         # 注册工具
         tool_executor.register_tool(Tool(
             name="get_medium_term_memories",
-            description="获取中期记忆，可选参数: days(最近N天), older_than_days(N天之前), min_importance(最小重要性), max_importance(最大重要性)",
+            description=(
+                "获取中期记忆卡片。支持多种筛选条件："
+                "days(最近N天创建)、older_than_days(N天之前创建)、"
+                "min_importance(最小重要性)、max_importance(最大重要性)、"
+                "limit(最多返回条数，默认100)。"
+                "建议先不加筛选条件获取总数，再根据需要使用筛选条件。"
+            ),
             function=get_medium_term_memories_func,
             parameters={
                 "type": "object",
                 "properties": {
-                    "days": {"type": "number"},
-                    "older_than_days": {"type": "number"},
-                    "min_importance": {"type": "number"},
-                    "max_importance": {"type": "number"}
+                    "days": {
+                        "type": "number",
+                        "description": "获取最近N天创建的记忆"
+                    },
+                    "older_than_days": {
+                        "type": "number",
+                        "description": "获取N天之前创建的记忆"
+                    },
+                    "min_importance": {
+                        "type": "number",
+                        "description": "最小重要性评分(0-1)"
+                    },
+                    "max_importance": {
+                        "type": "number",
+                        "description": "最大重要性评分(0-1)"
+                    },
+                    "limit": {
+                        "type": "number",
+                        "description": "最多返回的记忆数量（默认100，最大建议200）"
+                    }
                 },
                 "required": []
             }
@@ -692,23 +746,32 @@ class FullMemorySystem(MemorySystemBase):
 
         tool_executor.register_tool(Tool(
             name="get_long_term_memories",
-            description="获取所有长期记忆",
+            description="获取所有长期记忆卡片。用于查看已建立的长期知识，避免重复创建。",
             function=get_long_term_memories_func,
             parameters={"type": "object", "properties": {}, "required": []}
         ))
 
         tool_executor.register_tool(Tool(
             name="merge_similar_memories",
-            description="合并相似的中期记忆，传入delete_ids(要删除的ID列表)和new_card(新记忆的JSON)",
+            description=(
+                "合并相似的中期记忆卡片。"
+                "传入delete_ids（要删除的旧记忆ID列表）和new_card（新记忆的JSON字符串）。"
+                "用于将内容相似的记忆合并为一个更完整的记忆。"
+                "注意：合并后的新记忆会保留在记忆系统中。"
+            ),
             function=merge_similar_memories_func,
             parameters={
                 "type": "object",
                 "properties": {
                     "delete_ids": {
                         "type": "array",
-                        "items": {"type": "string"}
+                        "items": {"type": "string"},
+                        "description": "要删除的旧记忆ID列表"
                     },
-                    "new_card": {"type": "string"}
+                    "new_card": {
+                        "type": "string",
+                        "description": "新记忆的JSON字符串，包含topic_summary, key_points等字段"
+                    }
                 },
                 "required": ["delete_ids", "new_card"]
             }
@@ -716,12 +779,20 @@ class FullMemorySystem(MemorySystemBase):
 
         tool_executor.register_tool(Tool(
             name="create_long_term_memory",
-            description="创建长期记忆，传入包含记忆卡片字段的JSON或JSON列表",
+            description=(
+                "创建长期记忆卡片。用于存储需要长期保存的抽象化知识，如用户偏好、规则、重要事件等。"
+                "传入cards_json参数，可以是单个记忆卡片的JSON字符串，也可以是JSON列表字符串（批量创建）。"
+                "长期记忆字段：topic(主题), abstract_summary(抽象摘要), importance_score(重要性), "
+                "memory_type(类型: preference/rule/event/knowledge/characteristic), confidence_score(置信度)。"
+            ),
             function=create_long_term_memory_func,
             parameters={
                 "type": "object",
                 "properties": {
-                    "cards_json": {"type": "string"}
+                    "cards_json": {
+                        "type": "string",
+                        "description": "包含记忆卡片字段的JSON字符串或JSON列表字符串"
+                    }
                 },
                 "required": ["cards_json"]
             }
@@ -729,14 +800,19 @@ class FullMemorySystem(MemorySystemBase):
 
         tool_executor.register_tool(Tool(
             name="delete_medium_term_memories",
-            description="删除中期记忆，传入记忆ID列表",
+            description=(
+                "删除中期记忆卡片。传入memory_ids列表（要删除的记忆ID）。"
+                "用于清理重要程度低且时间较久、或已被合并/提取为长期记忆的原始记忆。"
+                "建议先创建长期记忆或合并后再删除，避免数据丢失。"
+            ),
             function=delete_medium_term_memories_func,
             parameters={
                 "type": "object",
                 "properties": {
                     "memory_ids": {
                         "type": "array",
-                        "items": {"type": "string"}
+                        "items": {"type": "string"},
+                        "description": "要删除的记忆ID列表"
                     }
                 },
                 "required": ["memory_ids"]

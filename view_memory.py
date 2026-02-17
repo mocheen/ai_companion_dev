@@ -22,12 +22,9 @@ def load_config() -> Dict[str, Any]:
 def format_emotion(emotion: EmotionType) -> str:
     """格式化情感类型"""
     emotion_map = {
-        EmotionType.HAPPY: "😊 开心",
-        EmotionType.SAD: "😢 难过",
-        EmotionType.ANGRY: "😠 生气",
-        EmotionType.NEUTRAL: "😐 中性",
-        EmotionType.EXCITED: "🤩 兴奋",
-        EmotionType.WORRIED: "😟 担忧"
+        EmotionType.POSITIVE: "😊 积极",
+        EmotionType.NEGATIVE: "😢 消极",
+        EmotionType.NEUTRAL: "😐 中性"
     }
     return emotion_map.get(emotion, str(emotion))
 
@@ -38,7 +35,8 @@ def format_dialogue_type(dialogue_type: DialogueType) -> str:
         DialogueType.CASUAL: "闲聊",
         DialogueType.QUESTION: "问答",
         DialogueType.TASK: "任务",
-        DialogueType.EMOTIONAL: "情感交流"
+        DialogueType.EMOTIONAL: "情感交流",
+        DialogueType.KNOWLEDGE: "知识分享"
     }
     return type_map.get(dialogue_type, str(dialogue_type))
 
@@ -46,10 +44,11 @@ def format_dialogue_type(dialogue_type: DialogueType) -> str:
 def format_memory_type(memory_type: LongTermMemoryType) -> str:
     """格式化长期记忆类型"""
     type_map = {
-        LongTermMemoryType.KNOWLEDGE: "知识",
-        LongTermMemoryType.USER_PROFILE: "用户画像",
         LongTermMemoryType.PREFERENCE: "偏好",
-        LongTermMemoryType.FACT: "事实"
+        LongTermMemoryType.RULE: "规则",
+        LongTermMemoryType.EVENT: "事件",
+        LongTermMemoryType.KNOWLEDGE: "知识",
+        LongTermMemoryType.CHARACTERISTIC: "特征"
     }
     return type_map.get(memory_type, str(memory_type))
 
@@ -166,7 +165,7 @@ def main():
                 )
                 emotions = st.multiselect(
                     "情感类型",
-                    ["neutral", "happy", "sad", "angry", "excited", "worried"]
+                    ["positive", "negative", "neutral"]
                 )
 
             # 应用过滤
@@ -216,7 +215,7 @@ def main():
                 )
                 memory_types = st.multiselect(
                     "记忆类型",
-                    ["knowledge", "user_profile", "preference", "fact"]
+                    ["preference", "rule", "event", "knowledge", "characteristic"]
                 )
 
             # 应用过滤

@@ -70,5 +70,9 @@ def setup_logging(config: Dict[str, Any]):
         ]
     )
 
+    # 抑制第三方库的DEBUG日志，减少日志噪音
+    logging.getLogger("chromadb").setLevel(logging.WARNING)
+    logging.getLogger("urllib3").setLevel(logging.WARNING)
+
     logging.info("日志系统初始化完成")
     logging.info(f"日志文件: {os.path.join(log_dir, log_file)}")
