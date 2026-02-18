@@ -100,6 +100,11 @@ class FullMemorySystem(MemorySystemBase):
         self.medium_term_count = retrieval_config.get("medium_term_count", 3)
         self.long_term_count = retrieval_config.get("long_term_count", 2)
 
+        # 记忆流转配置
+        memory_flow_config = config.get("memory_flow", {})
+        self.reorganize_interval_days = memory_flow_config.get("archive_interval_days", 7)
+        self.flow_state_file = memory_flow_config.get("flow_state_file", "data/memory_flow_state.json")
+
         # 加载短期记忆
         self._load_short_term_memory()
 
@@ -107,6 +112,11 @@ class FullMemorySystem(MemorySystemBase):
         if len(self.short_term_memory) >= self.max_messages:
             logger.info(f"短期记忆已达到上限（{len(self.short_term_memory)}/{self.max_messages}），触发归档流程")
             self._trigger_archive_async()
+
+        # 检查是否需要重整中期记忆（启动时）
+        if self._should_reorganize():
+            logger.info("启动时检测到需要重整中期记忆，触发重整流程")
+            self._trigger_reorganize_async()
 
         # 注册退出时保存
         atexit.register(self._save_short_term_memory)
@@ -144,6 +154,69 @@ class FullMemorySystem(MemorySystemBase):
 
         except Exception as e:
             logger.error(f"保存短期记忆失败: {e}", exc_info=True)
+
+    def _load_flow_state(self) -> Dict[str, Any]:
+        """加载记忆流转状态"""
+        default_state = {"last_reorganize_time": None}
+
+        if not os.path.exists(self.flow_state_file):
+            return default_state
+
+        try:
+            with open(self.flow_state_file, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            return data
+        except Exception as e:
+            logger.error(f"加载记忆流转状态失败: {e}", exc_info=True)
+            return default_state
+
+    def _save_flow_state(self, state: Dict[str, Any]):
+        """保存记忆流转状态"""
+        try:
+            os.makedirs(os.path.dirname(self.flow_state_file), exist_ok=True)
+            with open(self.flow_state_file, "w", encoding="utf-8") as f:
+                json.dump(state, f, ensure_ascii=False, indent=2)
+            logger.debug(f"已保存记忆流转状态到 {self.flow_state_file}")
+        except Exception as e:
+            logger.error(f"保存记忆流转状态失败: {e}", exc_info=True)
+
+    def _should_reorganize(self) -> bool:
+        """
+        检查是否需要触发中期记忆重整
+
+        条件：从未重整过 或 距离上次重整超过配置的天数
+        """
+        state = self._load_flow_state()
+        last_time = state.get("last_reorganize_time")
+
+        if not last_time:
+            logger.info("从未进行过中期记忆重整，需要执行")
+            return True
+
+        try:
+            last_dt = datetime.fromisoformat(last_time)
+            elapsed = datetime.now() - last_dt
+
+            if elapsed >= timedelta(days=self.reorganize_interval_days):
+                logger.info(
+                    f"距离上次重整已过 {elapsed.days} 天，超过阈值 {self.reorganize_interval_days} 天，需要执行"
+                )
+                return True
+            else:
+                logger.debug(
+                    f"距离上次重整仅过 {elapsed.days} 天，未超过阈值 {self.reorganize_interval_days} 天，暂不执行"
+                )
+                return False
+        except Exception as e:
+            logger.error(f"解析上次重整时间失败: {e}")
+            return True
+
+    def _update_reorganize_time(self):
+        """更新上次重整时间"""
+        state = self._load_flow_state()
+        state["last_reorganize_time"] = datetime.now().isoformat()
+        self._save_flow_state(state)
+        logger.info(f"已更新上次重整时间: {state['last_reorganize_time']}")
 
     def get_short_term_memory(self) -> List[ChatMessage]:
         """获取短期记忆"""
@@ -239,6 +312,11 @@ class FullMemorySystem(MemorySystemBase):
                 logger.info("短期记忆达到上限，触发归档流程")
                 self._trigger_archive_async()
 
+            # 检查是否需要重整中期记忆
+            if self._should_reorganize():
+                logger.info("对话后检测到需要重整中期记忆，触发重整流程")
+                self._trigger_reorganize_async()
+
     def _trigger_archive_async(self):
         """异步触发归档流程"""
         def archive_worker():
@@ -248,6 +326,19 @@ class FullMemorySystem(MemorySystemBase):
                 logger.error(f"归档短期记忆失败: {e}", exc_info=True)
 
         thread = Thread(target=archive_worker, daemon=True)
+        thread.start()
+
+    def _trigger_reorganize_async(self):
+        """异步触发中期记忆重整流程"""
+        def reorganize_worker():
+            try:
+                self.reorganize_medium_term_memory()
+                # 重整成功后更新时间
+                self._update_reorganize_time()
+            except Exception as e:
+                logger.error(f"重整中期记忆失败: {e}", exc_info=True)
+
+        thread = Thread(target=reorganize_worker, daemon=True)
         thread.start()
 
     def _archive_short_term_memory(self):

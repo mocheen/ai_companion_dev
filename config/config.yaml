@@ -64,5 +64,6 @@ vector_db:
 
 # 记忆流转配置
 memory_flow:
-  archive_interval_days: 7  # 中期记忆归档/重整间隔（天）
+  archive_interval_days: 7  # 中期记忆重整间隔（天）
+  flow_state_file: "data/memory_flow_state.json"  # 记忆流转状态持久化文件
 
