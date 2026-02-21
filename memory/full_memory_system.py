@@ -601,6 +601,16 @@ class FullMemorySystem(MemorySystemBase):
         with open(prompt_path, "r", encoding="utf-8") as f:
             agent_prompt = f.read().strip()
 
+        # 注入时间信息到prompt
+        state = self._load_flow_state()
+        last_reorganize_time = state.get("last_reorganize_time")
+        current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        last_reorganize_display = last_reorganize_time if last_reorganize_time else "从未重整过"
+
+        agent_prompt = agent_prompt.replace("{current_time}", current_time)
+        agent_prompt = agent_prompt.replace("{last_reorganize_time}", last_reorganize_display)
+        logger.debug(f"注入时间信息 - 当前时间: {current_time}, 上次重整: {last_reorganize_display}")
+
         # 创建工具执行器
         tool_executor = ToolExecutor()
 
