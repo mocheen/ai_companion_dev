@@ -53,20 +53,33 @@ def format_memory_type(memory_type: LongTermMemoryType) -> str:
     return type_map.get(memory_type, str(memory_type))
 
 
-def display_medium_term_memory(memory: Dict[str, Any]):
+def display_medium_term_memory(memory: Dict[str, Any], vector_store: VectorStore):
     """展示中期记忆卡片"""
     data = memory["data"]
+    memory_id = memory["id"]
 
     st.markdown("---")
-    st.subheader(f"📝 {data['topic_summary']}")
-
-    col1, col2, col3 = st.columns(3)
+    col1, col2, col3, col4 = st.columns([3, 1, 1, 1])
     with col1:
-        st.caption(f"情感: {format_emotion(EmotionType(data['emotion']))}")
+        st.subheader(f"📝 {data['topic_summary']}")
     with col2:
-        st.caption(f"类型: {format_dialogue_type(DialogueType(data['dialogue_type']))}")
+        st.caption(f"情感: {format_emotion(EmotionType(data['emotion']))}")
     with col3:
         st.caption(f"重要性: {data['importance_score']:.2f}")
+    with col4:
+        if st.button("🗑️ 删除", key=f"del_medium_{memory_id}", use_container_width=True):
+            if vector_store.delete_medium_term_memory(memory_id):
+                st.success("✅ 已删除")
+                st.rerun()
+            else:
+                st.error("❌ 删除失败")
+
+    col1, col2 = st.columns(2)
+    with col1:
+        st.caption(f"类型: {format_dialogue_type(DialogueType(data['dialogue_type']))}")
+    with col2:
+        created_at = datetime.fromisoformat(data['created_at'])
+        st.caption(f"创建时间: {created_at.strftime('%Y-%m-%d %H:%M:%S')}")
 
     st.markdown("**关键信息:**")
     for point in data['key_points']:
@@ -76,34 +89,41 @@ def display_medium_term_memory(memory: Dict[str, Any]):
         tags = ", ".join(data['topic_tags'])
         st.caption(f"标签: {tags}")
 
-    created_at = datetime.fromisoformat(data['created_at'])
-    st.caption(f"创建时间: {created_at.strftime('%Y-%m-%d %H:%M:%S')}")
-
     if data.get('source_message_ids'):
         with st.expander("源消息ID"):
             st.json(data['source_message_ids'])
 
 
-def display_long_term_memory(memory: Dict[str, Any]):
+def display_long_term_memory(memory: Dict[str, Any], vector_store: VectorStore):
     """展示长期记忆卡片"""
     data = memory["data"]
+    memory_id = memory["id"]
 
     st.markdown("---")
-    st.subheader(f"🧠 {data['topic']}")
-
-    col1, col2, col3 = st.columns(3)
+    col1, col2, col3, col4 = st.columns([3, 1, 1, 1])
     with col1:
-        st.caption(f"类型: {format_memory_type(LongTermMemoryType(data['memory_type']))}")
+        st.subheader(f"🧠 {data['topic']}")
     with col2:
-        st.caption(f"重要性: {data['importance_score']:.2f}")
+        st.caption(f"类型: {format_memory_type(LongTermMemoryType(data['memory_type']))}")
     with col3:
+        st.caption(f"重要性: {data['importance_score']:.2f}")
+    with col4:
+        if st.button("🗑️ 删除", key=f"del_long_{memory_id}", use_container_width=True):
+            if vector_store.delete_long_term_memory(memory_id):
+                st.success("✅ 已删除")
+                st.rerun()
+            else:
+                st.error("❌ 删除失败")
+
+    col1, col2 = st.columns(2)
+    with col1:
         st.caption(f"置信度: {data['confidence_score']:.2f}")
+    with col2:
+        created_at = datetime.fromisoformat(data['created_at'])
+        st.caption(f"创建时间: {created_at.strftime('%Y-%m-%d %H:%M:%S')}")
 
     st.markdown("**摘要:**")
     st.write(data['abstract_summary'])
-
-    created_at = datetime.fromisoformat(data['created_at'])
-    st.caption(f"创建时间: {created_at.strftime('%Y-%m-%d %H:%M:%S')}")
 
 
 def main():
@@ -180,7 +200,7 @@ def main():
 
             # 展示
             for mem in filtered_memories:
-                display_medium_term_memory(mem)
+                display_medium_term_memory(mem, vector_store)
         else:
             st.info("暂无中期记忆")
 
@@ -230,7 +250,7 @@ def main():
 
             # 展示
             for mem in filtered_memories:
-                display_long_term_memory(mem)
+                display_long_term_memory(mem, vector_store)
         else:
             st.info("暂无长期记忆")
 

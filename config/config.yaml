@@ -67,3 +67,7 @@ memory_flow:
   archive_interval_days: 7  # 中期记忆重整间隔（天）
   flow_state_file: "data/memory_flow_state.json"  # 记忆流转状态持久化文件
 
+# 命令系统配置
+commands:
+  prefix: "/"  # 管理员命令前缀，如 "/" 表示使用 /help, /exit 等命令
+

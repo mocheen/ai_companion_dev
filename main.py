@@ -8,6 +8,7 @@ import logging
 from utils import load_config, setup_logging
 from chat import ChatManager
 from memory import SimpleMemorySystem, FullMemorySystem
+from command_manager import CommandManager
 
 logger = logging.getLogger(__name__)
 
@@ -56,6 +57,14 @@ def main():
     # 将记忆系统设置到对话管理器
     chat_manager.set_memory_system(memory_system)
 
+    # 初始化命令管理器
+    command_config = config.get("commands", {})
+    command_prefix = command_config.get("prefix", "/")
+    command_manager = CommandManager(prefix=command_prefix)
+
+    # 注册默认命令（传入记忆系统以支持记忆相关命令）
+    command_manager.register_default_commands(memory_system)
+
     # 测试API连接
     print("正在测试API连接...")
     if not chat_manager.test_api_connection():
@@ -65,7 +74,7 @@ def main():
 
     # 交互循环
     print("=" * 50)
-    print("AI伙伴已启动！输入 'quit' 或 'exit' 退出")
+    print(f"AI伙伴已启动！输入 '{command_prefix}help' 查看可用命令")
     print("=" * 50)
     print()
 
@@ -82,10 +91,18 @@ def main():
             if not user_input:
                 continue
 
-            # 检查退出命令
-            if user_input.lower() in ["quit", "exit", "退出"]:
-                print("\n再见！")
-                break
+            # 尝试作为命令处理
+            command_result = command_manager.execute(user_input)
+
+            if command_result is not None:
+                # 是命令，显示结果
+                print(f"\n{command_result.message}\n")
+
+                # 检查是否需要退出
+                if command_result.should_exit:
+                    break
+
+                continue
 
             # 发送消息并获取回复
             response = chat_manager.chat(user_input)
