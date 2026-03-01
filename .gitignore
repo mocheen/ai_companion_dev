@@ -1,3 +1,6 @@
 *.json
 *.bin
 /data
+
+# 真实配置文件（包含敏感信息）
+config/config.yaml
