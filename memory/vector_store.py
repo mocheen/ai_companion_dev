@@ -31,9 +31,8 @@ class VectorStore:
         self.config = config
         vector_db_config = config.get("vector_db", {})
 
-        # 向量数据库持久化目录
-        self.persistence_dir = vector_db_config.get("persistence_dir", "data/chromadb")
-        os.makedirs(self.persistence_dir, exist_ok=True)
+        # ChromaDB模式
+        self.chroma_mode = vector_db_config.get("mode", "local")
 
         # 嵌入方式
         self.embedding_type = vector_db_config.get("embedding_type", "api")
@@ -68,10 +67,23 @@ class VectorStore:
         self.collection_long_name = vector_db_config.get("collection_long", "long_term_memories")
 
         # 初始化ChromaDB客户端
-        self.client = chromadb.PersistentClient(
-            path=self.persistence_dir,
-            settings=Settings(anonymized_telemetry=False)
-        )
+        if self.chroma_mode == "remote":
+            remote_host = vector_db_config.get("remote_host", "localhost")
+            remote_port = vector_db_config.get("remote_port", 8000)
+            logger.info(f"连接远程ChromaDB服务: {remote_host}:{remote_port}")
+            self.client = chromadb.HttpClient(
+                host=remote_host,
+                port=remote_port,
+                settings=Settings(anonymized_telemetry=False)
+            )
+        else:
+            self.persistence_dir = vector_db_config.get("persistence_dir", "data/chromadb")
+            os.makedirs(self.persistence_dir, exist_ok=True)
+            logger.info(f"使用本地ChromaDB: {self.persistence_dir}")
+            self.client = chromadb.PersistentClient(
+                path=self.persistence_dir,
+                settings=Settings(anonymized_telemetry=False)
+            )
 
         # 获取或创建集合
         self._init_collections()
