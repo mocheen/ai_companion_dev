@@ -11,9 +11,19 @@ agent_api:
   base_url: "https://open.bigmodel.cn/api/paas/v4/"
   tool_choice: "auto"
 
+# Agent配置
+agent:
+  # 归档Agent配置
+  archive:
+    max_iterations: 20  # 归档Agent最大迭代次数（防止无限循环）
+  
+  # 重整Agent配置
+  reorganize:
+    max_iterations: 40  # 重整Agent最大迭代次数（防止无限循环）
+
 # 短期记忆配置
 short_term_memory:
-  max_turns: 20
+  max_turns: 20 # 短期记忆最大对话轮数
   persist_file: "data/short_term_memory.json"  # 短期记忆持久化文件路径
 
 # 记忆系统配置

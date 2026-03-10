@@ -14,6 +14,12 @@ from datetime import datetime, timedelta
 from typing import List, Optional, Dict, Any
 from threading import Thread, Lock
 
+try:
+    import redis
+    REDIS_AVAILABLE = True
+except ImportError:
+    REDIS_AVAILABLE = False
+
 from memory.memory_base import MemorySystemBase
 from memory.memory_models import (
     ShortTermMessage, MediumTermMemory, LongTermMemory,
@@ -65,11 +71,27 @@ class FullMemorySystem(MemorySystemBase):
         short_term_config = config.get("short_term_memory", {})
         self.max_messages = short_term_config.get("max_turns", 20)
 
-        # 短期记忆持久化文件路径
-        self.persist_file = short_term_config.get("persist_file", "data/short_term_memory.json")
+        # 初始化Redis
+        redis_config = config.get("redis", {})
+        self.redis_prefix = redis_config.get("prefix", "ai_companion:")
+        self.redis_client = redis.Redis(
+            host=redis_config.get("host", "localhost"),
+            port=redis_config.get("port", 6379),
+            db=redis_config.get("db", 0),
+            password=redis_config.get("password", "") if redis_config.get("password") else None,
+            decode_responses=True
+        )
 
-        # 短期记忆队列
-        self.short_term_memory: List[ShortTermMessage] = []
+        # 尝试修复Redis RDB快照错误问题
+        try:
+            self.redis_client.config_set("stop-writes-on-bgsave-error", "no")
+            logger.info("已临时禁用Redis RDB快照错误检查")
+        except Exception as e:
+            logger.warning(f"无法自动修复Redis配置: {e}")
+
+        # Redis键名
+        self.redis_key_short_term = f"{self.redis_prefix}short_term_memory"
+        self.redis_key_flow_state = f"{self.redis_prefix}flow_state"
 
         # 初始化向量数据库
         self.vector_store = VectorStore(config)
@@ -103,10 +125,9 @@ class FullMemorySystem(MemorySystemBase):
         # 记忆流转配置
         memory_flow_config = config.get("memory_flow", {})
         self.reorganize_interval_days = memory_flow_config.get("archive_interval_days", 7)
-        self.flow_state_file = memory_flow_config.get("flow_state_file", "data/memory_flow_state.json")
 
         # 加载短期记忆
-        self._load_short_term_memory()
+        self.short_term_memory: List[ShortTermMessage] = self._load_short_term_memory()
 
         # 检查是否需要归档（启动时）
         if len(self.short_term_memory) >= self.max_messages:
@@ -118,67 +139,54 @@ class FullMemorySystem(MemorySystemBase):
             logger.info("启动时检测到需要重整中期记忆，触发重整流程")
             self._trigger_reorganize_async()
 
-        # 注册退出时保存
-        atexit.register(self._save_short_term_memory)
-
         logger.info("完整记忆系统初始化完成")
 
-    def _load_short_term_memory(self):
-        """从文件加载短期记忆"""
-        if not os.path.exists(self.persist_file):
-            logger.info(f"短期记忆文件不存在: {self.persist_file}")
-            return
-
+    def _load_short_term_memory(self) -> List[ShortTermMessage]:
+        """从Redis加载短期记忆"""
         try:
-            with open(self.persist_file, "r", encoding="utf-8") as f:
-                data = json.load(f)
-
-            self.short_term_memory = [ShortTermMessage.from_dict(msg) for msg in data]
-            logger.info(f"已加载 {len(self.short_term_memory)} 条短期记忆")
-
+            data_json = self.redis_client.get(self.redis_key_short_term)
+            if data_json:
+                data = json.loads(data_json)
+                memories = [ShortTermMessage.from_dict(msg) for msg in data]
+                logger.info(f"已从Redis加载 {len(memories)} 条短期记忆")
+                return memories
+            else:
+                logger.info("Redis中无短期记忆数据")
+                return []
         except Exception as e:
-            logger.error(f"加载短期记忆失败: {e}", exc_info=True)
-            self.short_term_memory = []
+            logger.error(f"从Redis加载短期记忆失败: {e}", exc_info=True)
+            return []
 
     def _save_short_term_memory(self):
-        """保存短期记忆到文件"""
+        """保存短期记忆到Redis"""
         try:
-            os.makedirs(os.path.dirname(self.persist_file), exist_ok=True)
-
             data = [msg.to_dict() for msg in self.short_term_memory]
-
-            with open(self.persist_file, "w", encoding="utf-8") as f:
-                json.dump(data, f, ensure_ascii=False, indent=2)
-
-            logger.debug(f"已保存 {len(self.short_term_memory)} 条短期记忆到 {self.persist_file}")
-
+            self.redis_client.set(self.redis_key_short_term, json.dumps(data, ensure_ascii=False))
+            logger.debug(f"已保存 {len(self.short_term_memory)} 条短期记忆到Redis")
         except Exception as e:
-            logger.error(f"保存短期记忆失败: {e}", exc_info=True)
+            logger.error(f"保存短期记忆到Redis失败: {e}", exc_info=True)
 
     def _load_flow_state(self) -> Dict[str, Any]:
-        """加载记忆流转状态"""
+        """从Redis加载记忆流转状态"""
         default_state = {"last_reorganize_time": None}
-
-        if not os.path.exists(self.flow_state_file):
-            return default_state
-
         try:
-            with open(self.flow_state_file, "r", encoding="utf-8") as f:
-                data = json.load(f)
-            return data
+            data_json = self.redis_client.get(self.redis_key_flow_state)
+            if data_json:
+                data = json.loads(data_json)
+                return data
+            else:
+                return default_state
         except Exception as e:
-            logger.error(f"加载记忆流转状态失败: {e}", exc_info=True)
+            logger.error(f"从Redis加载记忆流转状态失败: {e}", exc_info=True)
             return default_state
 
     def _save_flow_state(self, state: Dict[str, Any]):
-        """保存记忆流转状态"""
+        """保存记忆流转状态到Redis"""
         try:
-            os.makedirs(os.path.dirname(self.flow_state_file), exist_ok=True)
-            with open(self.flow_state_file, "w", encoding="utf-8") as f:
-                json.dump(state, f, ensure_ascii=False, indent=2)
-            logger.debug(f"已保存记忆流转状态到 {self.flow_state_file}")
+            self.redis_client.set(self.redis_key_flow_state, json.dumps(state, ensure_ascii=False))
+            logger.debug("已保存记忆流转状态到Redis")
         except Exception as e:
-            logger.error(f"保存记忆流转状态失败: {e}", exc_info=True)
+            logger.error(f"保存记忆流转状态到Redis失败: {e}", exc_info=True)
 
     def _should_reorganize(self) -> bool:
         """
@@ -307,6 +315,9 @@ class FullMemorySystem(MemorySystemBase):
 
             logger.debug(f"添加对话: 当前短期记忆数量 {len(self.short_term_memory)}")
 
+            # 保存到Redis
+            self._save_short_term_memory()
+
             # 检查是否需要归档
             if len(self.short_term_memory) >= self.max_messages:
                 logger.info("短期记忆达到上限，触发归档流程")
@@ -362,15 +373,20 @@ class FullMemorySystem(MemorySystemBase):
         # 注册归档工具
         self._register_archive_tools(tool_executor)
 
+        # 从配置获取归档Agent最大迭代次数
+        agent_config = self.config.get("agent", {})
+        archive_config = agent_config.get("archive", {})
+        archive_max_iterations = archive_config.get("max_iterations", 10)
+
         # 创建Agent
         agent = BaseAgent(
             llm=self.agent_llm,
             tool_executor=tool_executor,
             system_prompt=agent_prompt,
-            max_iterations=10
+            max_iterations=archive_max_iterations
         )
 
-        logger.info(f"初始化归档Agent，使用模型: {self.agent_llm.model}, tool_choice: {self.agent_tool_choice}")
+        logger.info(f"初始化归档Agent，使用模型: {self.agent_llm.model}, tool_choice: {self.agent_tool_choice}, max_iterations: {archive_max_iterations}")
 
         # 带重试机制的执行
         max_retries = 3
@@ -520,7 +536,7 @@ class FullMemorySystem(MemorySystemBase):
 
         tool_executor.register_tool(Tool(
             name="split_topics",
-            description="根据语义将对话分割为多个话题。传入每个话题最后一条消息的ID列表。系统会在这些消息上设置话题结束标记，不会删除任何消息。等Agent完成所有任务后，程序会自动根据标记清理已归档的消息。",
+            description="根据语义将对话分割为多个话题。传入需要归档的话题最后一条消息的ID列表（不要为最后一个话题标记！）。系统会在这些消息上设置话题结束标记，等Agent完成所有任务后，程序会自动删除标记之前的已归档消息，只保留最后一个可能未结束的话题。",
             function=split_topics_func,
             parameters={
                 "type": "object",
@@ -528,7 +544,7 @@ class FullMemorySystem(MemorySystemBase):
                     "topic_end_ids": {
                         "type": "array",
                         "items": {"type": "string"},
-                        "description": "每个话题最后一条消息的ID列表"
+                        "description": "需要归档的话题最后一条消息的ID列表（不要包含最后一个话题！）"
                     }
                 },
                 "required": ["topic_end_ids"]
@@ -617,15 +633,20 @@ class FullMemorySystem(MemorySystemBase):
         # 注册重整工具
         self._register_reorganize_tools(tool_executor)
 
+        # 从配置获取重整Agent最大迭代次数
+        agent_config = self.config.get("agent", {})
+        reorganize_config = agent_config.get("reorganize", {})
+        reorganize_max_iterations = reorganize_config.get("max_iterations", 15)
+
         # 创建Agent
         agent = BaseAgent(
             llm=self.agent_llm,
             tool_executor=tool_executor,
             system_prompt=agent_prompt,
-            max_iterations=15
+            max_iterations=reorganize_max_iterations
         )
 
-        logger.info(f"初始化重整Agent，使用模型: {self.agent_llm.model}, tool_choice: {self.agent_tool_choice}")
+        logger.info(f"初始化重整Agent，使用模型: {self.agent_llm.model}, tool_choice: {self.agent_tool_choice}, max_iterations: {reorganize_max_iterations}")
 
         # 带重试机制的执行（与归档Agent保持一致）
         max_retries = 3

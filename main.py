@@ -104,13 +104,15 @@ def main():
 
                 continue
 
-            # 发送消息并获取回复
-            response = chat_manager.chat(user_input)
-
-            if response:
-                print(f"\nAI: {response}\n")
-            else:
-                print("\nAI: 抱歉，我遇到了一些问题，请稍后再试。\n")
+            # 发送消息并获取回复（流式输出）
+            print("\nAI: ", end="", flush=True)
+            try:
+                for chunk in chat_manager.chat_stream(user_input):
+                    print(chunk, end="", flush=True)
+                print("\n")
+            except Exception as e:
+                logger.error(f"流式输出失败: {e}")
+                print("\n抱歉，我遇到了一些问题，请稍后再试。\n")
 
         except KeyboardInterrupt:
             print("\n\n再见！")

@@ -6,7 +6,7 @@
 import requests
 import json
 import logging
-from typing import Dict, List, Optional, Any
+from typing import Dict, List, Optional, Any, Iterator
 
 logger = logging.getLogger(__name__)
 
@@ -37,7 +37,8 @@ class ZhipuClient:
              max_tokens: int = 2000,
              timeout: int = 30,
              tools: Optional[List[Dict[str, Any]]] = None,
-             tool_choice: Optional[str] = None) -> Optional[str]:
+             tool_choice: Optional[str] = None,
+             stream: bool = False) -> Optional[str]:
         """
         发送聊天请求
 
@@ -48,6 +49,35 @@ class ZhipuClient:
             timeout: 超时时间(秒)
             tools: 工具列表，用于Function Calling（可选）
             tool_choice: 工具选择策略，可选值: "auto", "any", "none", 或指定具体工具（可选）
+            stream: 是否使用流式输出
+
+        Returns:
+            模型返回的文本内容或Function Calling响应，失败返回None
+        """
+        if stream:
+            full_response = ""
+            for chunk in self.chat_stream(messages, temperature, max_tokens, timeout, tools, tool_choice):
+                full_response += chunk
+            return full_response
+        else:
+            return self._chat_non_stream(messages, temperature, max_tokens, timeout, tools, tool_choice)
+
+    def _chat_non_stream(self, messages: List[Dict[str, str]],
+                        temperature: float = 0.7,
+                        max_tokens: int = 2000,
+                        timeout: int = 30,
+                        tools: Optional[List[Dict[str, Any]]] = None,
+                        tool_choice: Optional[str] = None) -> Optional[str]:
+        """
+        非流式聊天请求（用于Function Calling等场景）
+
+        Args:
+            messages: 消息列表
+            temperature: 温度参数
+            max_tokens: 最大生成token数
+            timeout: 超时时间(秒)
+            tools: 工具列表
+            tool_choice: 工具选择策略
 
         Returns:
             模型返回的文本内容或Function Calling响应，失败返回None
@@ -61,23 +91,18 @@ class ZhipuClient:
             "max_tokens": max_tokens
         }
 
-        # 如果提供了tools参数，添加到payload中
         if tools:
             payload["tools"] = tools
-            # 如果提供了tool_choice参数，添加到payload中
             if tool_choice:
                 payload["tool_choice"] = tool_choice
                 logger.debug(f"设置tool_choice={tool_choice}以启用函数调用模式")
 
         try:
-            # DEBUG级别记录详细请求信息
             logger.debug(f"发送请求到智谱API: {url}")
 
-            # 记录完整payload（用于调试Function Calling）
             if "tools" in payload:
                 logger.debug(f"请求payload包含tools参数，工具数量: {len(payload['tools'])}")
                 logger.debug(f"tool_choice参数: {payload.get('tool_choice', '未设置')}")
-                # 记录第一个tool的结构，方便调试格式问题
                 if payload.get("tools"):
                     logger.debug(f"第一个tool的格式: {payload['tools'][0]}")
 
@@ -91,15 +116,12 @@ class ZhipuClient:
             response.raise_for_status()
             result = response.json()
 
-            # 记录完整响应用于调试（特别是Function Calling）
             if "tools" in payload:
                 logger.debug(f"API完整响应: {json.dumps(result, ensure_ascii=False)[:500]}...")
 
-            # 提取返回的内容
             if "choices" in result and len(result["choices"]) > 0:
                 message = result["choices"][0]["message"]
 
-                # 调试：检查message的结构
                 if "tools" in payload:
                     logger.debug(f"响应message的keys: {list(message.keys())}")
                     if "tool_calls" in message:
@@ -107,12 +129,9 @@ class ZhipuClient:
                     else:
                         logger.debug(f"响应不包含tool_calls字段")
 
-                # 检查是否有tool_calls（Function Calling响应）
                 if "tool_calls" in message and message["tool_calls"]:
-                    # 返回tool_calls，让LangChain处理
                     logger.debug(f"返回Function Calling响应")
                     return message
-                # 否则返回普通的文本内容
                 elif "content" in message:
                     logger.debug(f"返回文本响应")
                     return message["content"]
@@ -131,6 +150,87 @@ class ZhipuClient:
             raise
         except json.JSONDecodeError as e:
             logger.error(f"JSON解析失败: {e}")
+            raise
+        except Exception as e:
+            logger.error(f"未知错误: {e}")
+            raise
+
+    def chat_stream(self, messages: List[Dict[str, str]],
+                    temperature: float = 0.7,
+                    max_tokens: int = 2000,
+                    timeout: int = 30,
+                    tools: Optional[List[Dict[str, Any]]] = None,
+                    tool_choice: Optional[str] = None) -> Iterator[str]:
+        """
+        流式聊天请求
+
+        Args:
+            messages: 消息列表
+            temperature: 温度参数
+            max_tokens: 最大生成token数
+            timeout: 超时时间(秒)
+            tools: 工具列表
+            tool_choice: 工具选择策略
+
+        Yields:
+            流式返回的文本片段
+        """
+        url = f"{self.base_url}chat/completions"
+
+        payload = {
+            "model": self.model,
+            "messages": messages,
+            "temperature": temperature,
+            "max_tokens": max_tokens,
+            "stream": True
+        }
+
+        if tools:
+            payload["tools"] = tools
+            if tool_choice:
+                payload["tool_choice"] = tool_choice
+
+        try:
+            logger.debug(f"发送流式请求到智谱API: {url}")
+
+            response = requests.post(
+                url,
+                headers=self.headers,
+                json=payload,
+                timeout=timeout,
+                stream=True
+            )
+
+            response.raise_for_status()
+
+            for line in response.iter_lines():
+                if not line:
+                    continue
+
+                line = line.decode('utf-8')
+
+                if line.startswith('data: '):
+                    data = line[6:]
+
+                    if data == '[DONE]':
+                        break
+
+                    try:
+                        chunk = json.loads(data)
+                        if 'choices' in chunk and len(chunk['choices']) > 0:
+                            delta = chunk['choices'][0].get('delta', {})
+                            content = delta.get('content', '')
+                            if content:
+                                yield content
+                    except json.JSONDecodeError as e:
+                        logger.warning(f"解析流式响应失败: {e}, data: {data}")
+                        continue
+
+        except requests.exceptions.Timeout:
+            logger.error(f"请求超时 (>{timeout}秒)")
+            raise
+        except requests.exceptions.RequestException as e:
+            logger.error(f"请求失败: {e}")
             raise
         except Exception as e:
             logger.error(f"未知错误: {e}")

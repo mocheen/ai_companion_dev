@@ -9,6 +9,9 @@ PyYAML>=6.0.0
 # 向量数据库
 chromadb>=0.4.0
 
+# Redis客户端
+redis>=5.0.0
+
 # 智谱AI SDK（用于LLM和Embedding API）
 # 注意：我们使用自己封装的LLM客户端，这个SDK仅用于可选的额外功能
 zhipuai>=2.0.0
