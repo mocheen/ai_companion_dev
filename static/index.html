@@ -491,7 +491,7 @@
                             </n-space>
                         </n-layout-header>
 
-                        <n-layout-content style="padding: 20px; overflow: auto;">
+                        <n-layout-content style="padding: 20px; overflow: auto; height: calc(100vh - 60px);">
                             <!-- 对话页面 -->
                             <div v-if="activeMenu === 'chat'" style="height: calc(100vh - 100px); display: flex; flex-direction: column;">
                                 <div ref="messageContainer" style="flex: 1; overflow-y: auto; padding: 10px;">
@@ -548,10 +548,10 @@
                             </div>
 
                             <!-- 记忆页面 -->
-                            <div v-else-if="activeMenu === 'memory'">
-                                <n-tabs v-model:value="memoryTab" type="line" animated>
-                                    <n-tab-pane name="medium" tab="中期记忆">
-                                        <n-space vertical size="large">
+                            <div v-else-if="activeMenu === 'memory'" style="height: 100%; display: flex; flex-direction: column;">
+                                <n-tabs v-model:value="memoryTab" type="line" animated style="flex: 1; display: flex; flex-direction: column;">
+                                    <n-tab-pane name="medium" tab="中期记忆" style="flex: 1; display: flex; flex-direction: column;">
+                                        <n-space vertical size="large" style="flex: 1; overflow-y: auto;">
                                             <n-card size="small">
                                                 <n-space>
                                                     <n-input v-model:value="memoryFilter.search" placeholder="搜索记忆..." style="width: 200px;" />
@@ -594,8 +594,8 @@
                                         </n-space>
                                     </n-tab-pane>
 
-                                    <n-tab-pane name="long" tab="长期记忆">
-                                        <n-space vertical size="large">
+                                    <n-tab-pane name="long" tab="长期记忆" style="flex: 1; display: flex; flex-direction: column;">
+                                        <n-space vertical size="large" style="flex: 1; overflow-y: auto;">
                                             <n-empty v-if="longTermMemories.length === 0" description="暂无长期记忆" />
                                             <n-card v-for="mem in longTermMemories" :key="mem.id" style="margin-bottom: 12px;">
                                                 <template #header>
@@ -628,18 +628,18 @@
                             </div>
 
                             <!-- 系统管理页面 -->
-                            <div v-else-if="activeMenu === 'system'">
-                                <n-tabs v-model:value="systemTab" type="line" animated>
-                                    <n-tab-pane name="command" tab="命令行">
-                                        <n-space vertical>
+                            <div v-else-if="activeMenu === 'system'" style="height: 100%; display: flex; flex-direction: column;">
+                                <n-tabs v-model:value="systemTab" type="line" animated style="flex: 1; display: flex; flex-direction: column;">
+                                    <n-tab-pane name="command" tab="命令行" style="flex: 1; display: flex; flex-direction: column;">
+                                        <n-space vertical style="flex: 1;">
                                             <n-space wrap>
                                                 <n-button v-for="cmd in quickCommands" :key="cmd.cmd" @click="executeCommand(cmd.cmd)">
                                                     {{ cmd.icon }} {{ cmd.label }}
                                                 </n-button>
                                             </n-space>
 
-                                            <n-card title="命令输出" style="margin-top: 16px;">
-                                                <div style="background: #0d1117; padding: 16px; border-radius: 6px; min-height: 300px; max-height: 400px; overflow-y: auto; font-family: monospace;">
+                                            <n-card title="命令输出" style="margin-top: 16px; flex: 1; display: flex; flex-direction: column;">
+                                                <div style="background: #0d1117; padding: 16px; border-radius: 6px; min-height: 300px; flex: 1; overflow-y: auto; font-family: monospace;">
                                                     <pre style="white-space: pre-wrap; color: #c9d1d9; margin: 0;">{{ commandOutput || '等待命令输入...' }}</pre>
                                                 </div>
                                             </n-card>
@@ -651,8 +651,8 @@
                                         </n-space>
                                     </n-tab-pane>
 
-                                    <n-tab-pane name="logs" tab="系统日志">
-                                        <n-space vertical>
+                                    <n-tab-pane name="logs" tab="系统日志" style="flex: 1; display: flex; flex-direction: column;">
+                                        <n-space vertical style="flex: 1;">
                                             <n-space>
                                                 <n-button @click="clearLogs">清空日志</n-button>
                                                 <n-switch v-model:value="autoScroll">
@@ -660,8 +660,8 @@
                                                     <template #unchecked>手动滚动</template>
                                                 </n-switch>
                                             </n-space>
-                                            <n-card>
-                                                <div ref="logContainer" style="background: #0d1117; padding: 16px; border-radius: 6px; min-height: 400px; max-height: 500px; overflow-y: auto; font-family: monospace; font-size: 13px;">
+                                            <n-card style="flex: 1; display: flex; flex-direction: column;">
+                                                <div ref="logContainer" style="background: #0d1117; padding: 16px; border-radius: 6px; flex: 1; overflow-y: auto; font-family: monospace; font-size: 13px;">
                                                     <div v-for="(log, index) in logs" :key="index" :style="{ color: getLogColor(log.level), marginBottom: '4px' }">
                                                         <span style="color: #6e7681;">[{{ formatDateTime(log.timestamp) }}]</span>
                                                         <span :style="{ color: getLogColor(log.level), marginLeft: '8px' }">[{{ log.level }}]</span>
@@ -673,8 +673,8 @@
                                         </n-space>
                                     </n-tab-pane>
 
-                                    <n-tab-pane name="status" tab="系统状态">
-                                        <n-grid :cols="2" :x-gap="20" :y-gap="20" responsive="screen">
+                                    <n-tab-pane name="status" tab="系统状态" style="flex: 1; display: flex; flex-direction: column;">
+                                        <n-grid :cols="2" :x-gap="20" :y-gap="20" responsive="screen" style="flex: 1;">
                                             <n-gi>
                                                 <n-card title="记忆系统">
                                                     <n-descriptions :column="1" bordered>
@@ -722,8 +722,8 @@
                             </div>
 
                             <!-- 设置页面 -->
-                            <div v-else-if="activeMenu === 'settings'">
-                                <n-card title="设置" style="max-width: 600px;">
+                            <div v-else-if="activeMenu === 'settings'" style="height: 100%; display: flex; justify-content: center; align-items: flex-start; overflow-y: auto;">
+                                <n-card title="设置" style="width: 100%; max-width: 600px;">
                                     <n-form :model="settings" label-placement="left" label-width="120px">
                                         <n-divider>对话设置</n-divider>
                                         <n-form-item label="温度参数">
