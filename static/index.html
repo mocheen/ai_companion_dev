@@ -1,0 +1,789 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI伙伴</title>
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🤖</text></svg>">
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        html, body, #app {
+            height: 100%;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+        }
+
+        ::-webkit-scrollbar {
+            width: 6px;
+            height: 6px;
+        }
+
+        ::-webkit-scrollbar-track {
+            background: transparent;
+        }
+
+        ::-webkit-scrollbar-thumb {
+            background: #c1c1c1;
+            border-radius: 3px;
+        }
+
+        ::-webkit-scrollbar-thumb:hover {
+            background: #a1a1a1;
+        }
+
+        .loading-container {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100%;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        }
+
+        .loading-text {
+            color: white;
+            font-size: 24px;
+            animation: pulse 1.5s ease-in-out infinite;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+
+        .markdown-content pre {
+            background: #f6f8fa;
+            padding: 16px;
+            border-radius: 6px;
+            overflow-x: auto;
+            margin: 8px 0;
+        }
+
+        .markdown-content code {
+            background: #f6f8fa;
+            padding: 2px 6px;
+            border-radius: 3px;
+            font-family: 'Consolas', 'Monaco', monospace;
+            font-size: 14px;
+        }
+
+        .markdown-content pre code {
+            background: transparent;
+            padding: 0;
+        }
+
+        .markdown-content p {
+            margin: 8px 0;
+        }
+
+        .markdown-content ul, .markdown-content ol {
+            padding-left: 20px;
+            margin: 8px 0;
+        }
+
+        .markdown-content blockquote {
+            border-left: 4px solid #dfe2e5;
+            padding-left: 16px;
+            color: #6a737d;
+            margin: 8px 0;
+        }
+    </style>
+</head>
+<body>
+    <div id="app">
+        <div class="loading-container" v-if="!ready">
+            <div class="loading-text">AI伙伴 加载中...</div>
+        </div>
+        <n-config-provider v-else :theme="darkTheme" :theme-overrides="themeOverrides">
+            <n-message-provider>
+                <n-dialog-provider>
+                    <main-app></main-app>
+                </n-dialog-provider>
+            </n-message-provider>
+        </n-config-provider>
+    </div>
+
+    <script src="https://unpkg.com/vue@3.4.21/dist/vue.global.prod.js"></script>
+    <script src="https://unpkg.com/naive-ui@2.38.1/dist/index.prod.js"></script>
+    <script src="https://unpkg.com/marked@12.0.1/marked.min.js"></script>
+
+    <script>
+        const { createApp, ref, reactive, computed, onMounted, nextTick, h, defineComponent } = Vue;
+        const naive = window.naive;
+
+        // 主应用组件
+        const MainApp = defineComponent({
+            name: 'MainApp',
+            setup() {
+                const message = naive.useMessage();
+                const dialog = naive.useDialog();
+
+                // 状态
+                const collapsed = ref(false);
+                const activeMenu = ref('chat');
+                const memoryTab = ref('medium');
+                const systemTab = ref('command');
+
+                // 主题
+                const darkTheme = naive.darkTheme;
+                const themeOverrides = {
+                    common: {
+                        primaryColor: '#409eff',
+                        primaryColorHover: '#66b1ff',
+                        primaryColorPressed: '#3a8ee6'
+                    }
+                };
+
+                // 菜单
+                const menuOptions = [
+                    { label: '对话', key: 'chat', icon: () => h('span', '💬') },
+                    { label: '记忆', key: 'memory', icon: () => h('span', '🧠') },
+                    { label: '系统', key: 'system', icon: () => h('span', '💻') },
+                    { label: '设置', key: 'settings', icon: () => h('span', '⚙️') }
+                ];
+
+                const pageTitle = computed(() => {
+                    const titles = { chat: '对话', memory: '记忆管理', system: '系统管理', settings: '设置' };
+                    return titles[activeMenu.value] || 'AI伙伴';
+                });
+
+                // 对话
+                const messages = ref([]);
+                const inputMessage = ref('');
+                const isTyping = ref(false);
+                const messageContainer = ref(null);
+                const ws = ref(null);
+                const logWs = ref(null);
+
+                // 记忆
+                const mediumTermMemories = ref([]);
+                const longTermMemories = ref([]);
+                const memoryFilter = reactive({ search: '', minImportance: 0 });
+
+                const filteredMediumMemories = computed(() => {
+                    return mediumTermMemories.value.filter(mem => {
+                        if (mem.data.importance_score < memoryFilter.minImportance) return false;
+                        if (memoryFilter.search) {
+                            const search = memoryFilter.search.toLowerCase();
+                            return mem.data.topic_summary.toLowerCase().includes(search) ||
+                                   mem.data.key_points.some(p => p.toLowerCase().includes(search));
+                        }
+                        return true;
+                    });
+                });
+
+                // 系统
+                const commandInput = ref('');
+                const commandOutput = ref('');
+                const logs = ref([]);
+                const autoScroll = ref(true);
+                const logContainer = ref(null);
+
+                const quickCommands = [
+                    { cmd: '/status', label: '系统状态', icon: '📊' },
+                    { cmd: '/short', label: '短期记忆', icon: '📋' },
+                    { cmd: '/archive', label: '手动归档', icon: '📦' },
+                    { cmd: '/reorganize', label: '手动重整', icon: '🔄' },
+                    { cmd: '/help', label: '帮助', icon: '❓' }
+                ];
+
+                const systemStatus = reactive({
+                    memory: { short_term: 0, short_term_max: 20, medium_term: 0, long_term: 0, type: 'unknown' },
+                    agent: { archive: 'idle', reorganize: 'idle' },
+                    api: { connected: false, model: '', response_time: 0 }
+                });
+
+                const memoryStatus = computed(() => ({
+                    short: systemStatus.memory.short_term,
+                    max: systemStatus.memory.short_term_max
+                }));
+
+                // 设置
+                const settings = reactive({
+                    temperature: 0.7,
+                    maxTokens: 2000,
+                    shortTermMax: 20,
+                    mediumRetrieval: 3,
+                    longRetrieval: 2
+                });
+
+                // 方法
+                const handleMenuChange = (key) => { activeMenu.value = key; };
+
+                const formatTime = (timestamp) => {
+                    if (!timestamp) return '';
+                    return new Date(timestamp).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+                };
+
+                const formatDateTime = (timestamp) => {
+                    if (!timestamp) return '';
+                    return new Date(timestamp).toLocaleString('zh-CN');
+                };
+
+                const renderMarkdown = (content) => {
+                    if (!content) return '';
+                    try { return marked.parse(content); } catch (e) { return content; }
+                };
+
+                const scrollToBottom = () => {
+                    nextTick(() => {
+                        if (messageContainer.value) {
+                            messageContainer.value.scrollTop = messageContainer.value.scrollHeight;
+                        }
+                    });
+                };
+
+                const connectWebSocket = () => {
+                    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+                    const wsUrl = `${protocol}//${window.location.host}/ws/chat`;
+                    ws.value = new WebSocket(wsUrl);
+
+                    ws.value.onopen = () => console.log('WebSocket连接已建立');
+
+                    ws.value.onmessage = (event) => {
+                        const data = JSON.parse(event.data);
+                        if (data.type === 'chunk') {
+                            if (messages.value.length > 0) {
+                                const lastMsg = messages.value[messages.value.length - 1];
+                                if (lastMsg.role === 'assistant') {
+                                    lastMsg.content += data.content;
+                                }
+                            }
+                        } else if (data.type === 'done') {
+                            isTyping.value = false;
+                            scrollToBottom();
+                        } else if (data.type === 'error') {
+                            isTyping.value = false;
+                            message.error(data.message);
+                        } else if (data.type === 'command_result') {
+                            commandOutput.value = data.message;
+                        }
+                    };
+
+                    ws.value.onclose = () => {
+                        console.log('WebSocket连接已关闭，5秒后重连...');
+                        setTimeout(connectWebSocket, 5000);
+                    };
+
+                    ws.value.onerror = (error) => console.error('WebSocket错误:', error);
+                };
+
+                const connectLogWebSocket = () => {
+                    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+                    const wsUrl = `${protocol}//${window.location.host}/ws/logs`;
+                    logWs.value = new WebSocket(wsUrl);
+
+                    logWs.value.onmessage = (event) => {
+                        const data = JSON.parse(event.data);
+                        if (data.type === 'log') {
+                            logs.value.push(data);
+                            if (logs.value.length > 500) logs.value.shift();
+                            if (autoScroll.value) {
+                                nextTick(() => {
+                                    if (logContainer.value) {
+                                        logContainer.value.scrollTop = logContainer.value.scrollHeight;
+                                    }
+                                });
+                            }
+                        }
+                    };
+
+                    logWs.value.onclose = () => setTimeout(connectLogWebSocket, 5000);
+                };
+
+                const sendMessage = () => {
+                    const content = inputMessage.value.trim();
+                    if (!content || isTyping.value) return;
+
+                    messages.value.push({ role: 'user', content: content, timestamp: new Date().toISOString() });
+                    messages.value.push({ role: 'assistant', content: '', timestamp: new Date().toISOString() });
+
+                    inputMessage.value = '';
+                    isTyping.value = true;
+                    scrollToBottom();
+
+                    if (ws.value && ws.value.readyState === WebSocket.OPEN) {
+                        ws.value.send(JSON.stringify({ type: 'message', content: content }));
+                    }
+                };
+
+                const loadHistory = async () => {
+                    try {
+                        const response = await fetch('/api/history');
+                        const data = await response.json();
+                        if (data.success) {
+                            messages.value = data.messages.map(msg => ({
+                                role: msg.role, content: msg.content, timestamp: msg.timestamp
+                            }));
+                            scrollToBottom();
+                        }
+                    } catch (e) { console.error('加载历史记录失败:', e); }
+                };
+
+                const loadMemories = async () => {
+                    try {
+                        const [mediumRes, longRes] = await Promise.all([
+                            fetch('/api/memory/medium?limit=100'),
+                            fetch('/api/memory/long?limit=100')
+                        ]);
+                        const mediumData = await mediumRes.json();
+                        const longData = await longRes.json();
+                        if (mediumData.success) mediumTermMemories.value = mediumData.memories;
+                        if (longData.success) longTermMemories.value = longData.memories;
+                    } catch (e) { console.error('加载记忆失败:', e); }
+                };
+
+                const deleteMemory = async (type, id) => {
+                    dialog.warning({
+                        title: '确认删除',
+                        content: '确定要删除这条记忆吗？此操作不可恢复。',
+                        positiveText: '删除',
+                        negativeText: '取消',
+                        onPositiveClick: async () => {
+                            try {
+                                const response = await fetch(`/api/memory/${type}/${id}`, { method: 'DELETE' });
+                                const data = await response.json();
+                                if (data.success) {
+                                    message.success('删除成功');
+                                    loadMemories();
+                                }
+                            } catch (e) { message.error('删除失败'); }
+                        }
+                    });
+                };
+
+                const executeCommand = async (cmd) => {
+                    if (!cmd) return;
+                    commandInput.value = '';
+                    try {
+                        const response = await fetch('/api/command', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ command: cmd })
+                        });
+                        const data = await response.json();
+                        commandOutput.value = data.result;
+                    } catch (e) {
+                        commandOutput.value = `错误: ${e.message}`;
+                    }
+                };
+
+                const clearLogs = () => { logs.value = []; };
+
+                const loadSystemStatus = async () => {
+                    try {
+                        const response = await fetch('/api/status');
+                        const data = await response.json();
+                        if (data.success) Object.assign(systemStatus, data.status);
+                    } catch (e) { console.error('加载系统状态失败:', e); }
+                };
+
+                const refreshData = () => {
+                    if (activeMenu.value === 'chat') loadHistory();
+                    else if (activeMenu.value === 'memory') loadMemories();
+                    else if (activeMenu.value === 'system') loadSystemStatus();
+                    loadSystemStatus();
+                    message.success('已刷新');
+                };
+
+                const saveSettings = () => {
+                    localStorage.setItem('ai-companion-settings', JSON.stringify(settings));
+                    message.success('设置已保存');
+                };
+
+                const resetSettings = () => {
+                    settings.temperature = 0.7;
+                    settings.maxTokens = 2000;
+                    settings.shortTermMax = 20;
+                    settings.mediumRetrieval = 3;
+                    settings.longRetrieval = 2;
+                };
+
+                const getEmotionType = (emotion) => {
+                    const types = { positive: 'success', negative: 'error', neutral: 'default' };
+                    return types[emotion] || 'default';
+                };
+
+                const getEmotionText = (emotion) => {
+                    const texts = { positive: '😊 积极', negative: '😢 消极', neutral: '😐 中性' };
+                    return texts[emotion] || emotion;
+                };
+
+                const getMemoryTypeColor = (type) => {
+                    const colors = { preference: 'info', rule: 'warning', event: 'success', knowledge: 'default', characteristic: 'error' };
+                    return colors[type] || 'default';
+                };
+
+                const getMemoryTypeText = (type) => {
+                    const texts = { preference: '偏好', rule: '规则', event: '事件', knowledge: '知识', characteristic: '特征' };
+                    return texts[type] || type;
+                };
+
+                const getLogColor = (level) => {
+                    const colors = { ERROR: '#f56c6c', WARNING: '#e6a23c', INFO: '#409eff', DEBUG: '#909399' };
+                    return colors[level] || '#c9d1d9';
+                };
+
+                onMounted(async () => {
+                    const savedSettings = localStorage.getItem('ai-companion-settings');
+                    if (savedSettings) Object.assign(settings, JSON.parse(savedSettings));
+
+                    connectWebSocket();
+                    connectLogWebSocket();
+
+                    await Promise.all([loadHistory(), loadMemories(), loadSystemStatus()]);
+                });
+
+                return {
+                    collapsed, activeMenu, memoryTab, systemTab,
+                    darkTheme, themeOverrides, menuOptions, pageTitle,
+                    messages, inputMessage, isTyping, messageContainer,
+                    mediumTermMemories, longTermMemories, memoryFilter, filteredMediumMemories,
+                    commandInput, commandOutput, logs, autoScroll, logContainer,
+                    quickCommands, systemStatus, memoryStatus, settings,
+                    handleMenuChange, formatTime, formatDateTime, renderMarkdown,
+                    sendMessage, deleteMemory, executeCommand, clearLogs,
+                    refreshData, saveSettings, resetSettings,
+                    getEmotionType, getEmotionText, getMemoryTypeColor, getMemoryTypeText, getLogColor
+                };
+            },
+            template: `
+                <n-layout has-sider style="height: 100%;">
+                    <n-layout-sider
+                        bordered
+                        collapse-mode="width"
+                        :collapsed-width="64"
+                        :width="240"
+                        :collapsed="collapsed"
+                        show-trigger
+                        @collapse="collapsed = true"
+                        @expand="collapsed = false"
+                        style="background: #1a1a2e;"
+                    >
+                        <div style="padding: 16px; text-align: center;">
+                            <n-text style="font-size: 20px; font-weight: bold; color: #409eff;">
+                                {{ collapsed ? '🤖' : '🤖 AI伙伴' }}
+                            </n-text>
+                        </div>
+                        <n-menu
+                            :collapsed="collapsed"
+                            :collapsed-width="64"
+                            :collapsed-icon-size="22"
+                            :options="menuOptions"
+                            :value="activeMenu"
+                            @update:value="handleMenuChange"
+                            style="background: transparent;"
+                        />
+                    </n-layout-sider>
+
+                    <n-layout>
+                        <n-layout-header bordered style="height: 60px; padding: 0 20px; display: flex; align-items: center; justify-content: space-between; background: #16213e;">
+                            <n-text style="font-size: 18px; font-weight: 500;">{{ pageTitle }}</n-text>
+                            <n-space>
+                                <n-button quaternary circle @click="refreshData">
+                                    <template #icon>
+                                        <n-icon><span style="font-size: 18px;">🔄</span></n-icon>
+                                    </template>
+                                </n-button>
+                            </n-space>
+                        </n-layout-header>
+
+                        <n-layout-content style="padding: 20px; overflow: auto;">
+                            <!-- 对话页面 -->
+                            <div v-if="activeMenu === 'chat'" style="height: calc(100vh - 100px); display: flex; flex-direction: column;">
+                                <div ref="messageContainer" style="flex: 1; overflow-y: auto; padding: 10px;">
+                                    <div v-if="messages.length === 0" style="text-align: center; padding: 40px; color: #999;">
+                                        <n-text depth="3">开始与AI伙伴对话吧！</n-text>
+                                    </div>
+                                    <div v-for="(msg, index) in messages" :key="index" style="margin-bottom: 16px;">
+                                        <div :style="{ textAlign: msg.role === 'user' ? 'right' : 'left' }">
+                                            <n-card
+                                                :style="{
+                                                    maxWidth: '80%',
+                                                    display: 'inline-block',
+                                                    textAlign: 'left',
+                                                    background: msg.role === 'user' ? '#409eff' : '#2d3748'
+                                                }"
+                                                size="small"
+                                            >
+                                                <template #header v-if="msg.timestamp">
+                                                    <n-text depth="3" style="font-size: 12px;">
+                                                        [{{ formatTime(msg.timestamp) }}]
+                                                        {{ msg.role === 'user' ? '你' : 'AI' }}
+                                                    </n-text>
+                                                </template>
+                                                <div class="markdown-content" v-html="renderMarkdown(msg.content)"></div>
+                                            </n-card>
+                                        </div>
+                                    </div>
+                                    <div v-if="isTyping" style="text-align: left;">
+                                        <n-card style="max-width: 80%; display: inline-block; background: #2d3748;" size="small">
+                                            <n-text>AI正在思考</n-text>
+                                            <n-spin size="small" style="margin-left: 8px;" />
+                                        </n-card>
+                                    </div>
+                                </div>
+
+                                <div style="padding: 10px; background: #1a1a2e; border-radius: 8px;">
+                                    <n-input
+                                        v-model:value="inputMessage"
+                                        type="textarea"
+                                        placeholder="输入消息... (Ctrl+Enter 发送)"
+                                        :autosize="{ minRows: 2, maxRows: 4 }"
+                                        @keydown.ctrl.enter="sendMessage"
+                                        style="margin-bottom: 10px;"
+                                    />
+                                    <n-space justify="space-between">
+                                        <n-text depth="3" style="font-size: 12px;">
+                                            短期记忆: {{ memoryStatus.short }}/{{ memoryStatus.max }}
+                                        </n-text>
+                                        <n-button type="primary" @click="sendMessage" :loading="isTyping" :disabled="!inputMessage.trim()">
+                                            发送
+                                        </n-button>
+                                    </n-space>
+                                </div>
+                            </div>
+
+                            <!-- 记忆页面 -->
+                            <div v-else-if="activeMenu === 'memory'">
+                                <n-tabs v-model:value="memoryTab" type="line" animated>
+                                    <n-tab-pane name="medium" tab="中期记忆">
+                                        <n-space vertical size="large">
+                                            <n-card size="small">
+                                                <n-space>
+                                                    <n-input v-model:value="memoryFilter.search" placeholder="搜索记忆..." style="width: 200px;" />
+                                                    <n-slider v-model:value="memoryFilter.minImportance" :min="0" :max="1" :step="0.1" style="width: 150px;" />
+                                                    <n-text depth="3">最小重要性: {{ memoryFilter.minImportance }}</n-text>
+                                                </n-space>
+                                            </n-card>
+
+                                            <n-empty v-if="filteredMediumMemories.length === 0" description="暂无中期记忆" />
+                                            <n-card v-for="mem in filteredMediumMemories" :key="mem.id" style="margin-bottom: 12px;">
+                                                <template #header>
+                                                    <n-space align="center">
+                                                        <n-text strong>{{ mem.data.topic_summary }}</n-text>
+                                                        <n-tag :type="getEmotionType(mem.data.emotion)" size="small">
+                                                            {{ getEmotionText(mem.data.emotion) }}
+                                                        </n-tag>
+                                                    </n-space>
+                                                </template>
+                                                <template #header-extra>
+                                                    <n-space>
+                                                        <n-rate :value="mem.data.importance_score * 5" readonly size="small" />
+                                                        <n-button size="small" type="error" @click="deleteMemory('medium', mem.id)">
+                                                            删除
+                                                        </n-button>
+                                                    </n-space>
+                                                </template>
+                                                <n-space vertical>
+                                                    <n-text>关键信息:</n-text>
+                                                    <ul>
+                                                        <li v-for="(point, i) in mem.data.key_points" :key="i">{{ point }}</li>
+                                                    </ul>
+                                                    <n-space>
+                                                        <n-tag v-for="tag in mem.data.topic_tags" :key="tag" size="small">{{ tag }}</n-tag>
+                                                    </n-space>
+                                                    <n-text depth="3" style="font-size: 12px;">
+                                                        创建时间: {{ formatDateTime(mem.data.created_at) }}
+                                                    </n-text>
+                                                </n-space>
+                                            </n-card>
+                                        </n-space>
+                                    </n-tab-pane>
+
+                                    <n-tab-pane name="long" tab="长期记忆">
+                                        <n-space vertical size="large">
+                                            <n-empty v-if="longTermMemories.length === 0" description="暂无长期记忆" />
+                                            <n-card v-for="mem in longTermMemories" :key="mem.id" style="margin-bottom: 12px;">
+                                                <template #header>
+                                                    <n-space align="center">
+                                                        <n-text strong>{{ mem.data.topic }}</n-text>
+                                                        <n-tag :type="getMemoryTypeColor(mem.data.memory_type)" size="small">
+                                                            {{ getMemoryTypeText(mem.data.memory_type) }}
+                                                        </n-tag>
+                                                    </n-space>
+                                                </template>
+                                                <template #header-extra>
+                                                    <n-space>
+                                                        <n-rate :value="mem.data.importance_score * 5" readonly size="small" />
+                                                        <n-button size="small" type="error" @click="deleteMemory('long', mem.id)">
+                                                            删除
+                                                        </n-button>
+                                                    </n-space>
+                                                </template>
+                                                <n-space vertical>
+                                                    <n-text>{{ mem.data.abstract_summary }}</n-text>
+                                                    <n-text depth="3" style="font-size: 12px;">
+                                                        置信度: {{ (mem.data.confidence_score * 100).toFixed(0) }}%
+                                                        | 创建时间: {{ formatDateTime(mem.data.created_at) }}
+                                                    </n-text>
+                                                </n-space>
+                                            </n-card>
+                                        </n-space>
+                                    </n-tab-pane>
+                                </n-tabs>
+                            </div>
+
+                            <!-- 系统管理页面 -->
+                            <div v-else-if="activeMenu === 'system'">
+                                <n-tabs v-model:value="systemTab" type="line" animated>
+                                    <n-tab-pane name="command" tab="命令行">
+                                        <n-space vertical>
+                                            <n-space wrap>
+                                                <n-button v-for="cmd in quickCommands" :key="cmd.cmd" @click="executeCommand(cmd.cmd)">
+                                                    {{ cmd.icon }} {{ cmd.label }}
+                                                </n-button>
+                                            </n-space>
+
+                                            <n-card title="命令输出" style="margin-top: 16px;">
+                                                <div style="background: #0d1117; padding: 16px; border-radius: 6px; min-height: 300px; max-height: 400px; overflow-y: auto; font-family: monospace;">
+                                                    <pre style="white-space: pre-wrap; color: #c9d1d9; margin: 0;">{{ commandOutput || '等待命令输入...' }}</pre>
+                                                </div>
+                                            </n-card>
+
+                                            <n-input-group>
+                                                <n-input v-model:value="commandInput" placeholder="输入命令..." @keydown.enter="executeCommand(commandInput)" />
+                                                <n-button type="primary" @click="executeCommand(commandInput)">执行</n-button>
+                                            </n-input-group>
+                                        </n-space>
+                                    </n-tab-pane>
+
+                                    <n-tab-pane name="logs" tab="系统日志">
+                                        <n-space vertical>
+                                            <n-space>
+                                                <n-button @click="clearLogs">清空日志</n-button>
+                                                <n-switch v-model:value="autoScroll">
+                                                    <template #checked>自动滚动</template>
+                                                    <template #unchecked>手动滚动</template>
+                                                </n-switch>
+                                            </n-space>
+                                            <n-card>
+                                                <div ref="logContainer" style="background: #0d1117; padding: 16px; border-radius: 6px; min-height: 400px; max-height: 500px; overflow-y: auto; font-family: monospace; font-size: 13px;">
+                                                    <div v-for="(log, index) in logs" :key="index" :style="{ color: getLogColor(log.level), marginBottom: '4px' }">
+                                                        <span style="color: #6e7681;">[{{ formatDateTime(log.timestamp) }}]</span>
+                                                        <span :style="{ color: getLogColor(log.level), marginLeft: '8px' }">[{{ log.level }}]</span>
+                                                        <span style="margin-left: 8px;">{{ log.message }}</span>
+                                                    </div>
+                                                    <div v-if="logs.length === 0" style="color: #6e7681;">暂无日志</div>
+                                                </div>
+                                            </n-card>
+                                        </n-space>
+                                    </n-tab-pane>
+
+                                    <n-tab-pane name="status" tab="系统状态">
+                                        <n-grid :cols="2" :x-gap="20" :y-gap="20" responsive="screen">
+                                            <n-gi>
+                                                <n-card title="记忆系统">
+                                                    <n-descriptions :column="1" bordered>
+                                                        <n-descriptions-item label="短期记忆">
+                                                            <n-progress
+                                                                type="line"
+                                                                :percentage="(systemStatus.memory.short_term / systemStatus.memory.short_term_max) * 100"
+                                                                :show-indicator="false"
+                                                                style="width: 150px;"
+                                                            />
+                                                            <n-text style="margin-left: 8px;">
+                                                                {{ systemStatus.memory.short_term }}/{{ systemStatus.memory.short_term_max }}
+                                                            </n-text>
+                                                        </n-descriptions-item>
+                                                        <n-descriptions-item label="中期记忆">
+                                                            {{ systemStatus.memory.medium_term }} 条
+                                                        </n-descriptions-item>
+                                                        <n-descriptions-item label="长期记忆">
+                                                            {{ systemStatus.memory.long_term }} 条
+                                                        </n-descriptions-item>
+                                                        <n-descriptions-item label="记忆类型">
+                                                            {{ systemStatus.memory.type }}
+                                                        </n-descriptions-item>
+                                                    </n-descriptions>
+                                                </n-card>
+                                            </n-gi>
+
+                                            <n-gi>
+                                                <n-card title="API状态">
+                                                    <n-descriptions :column="1" bordered>
+                                                        <n-descriptions-item label="连接状态">
+                                                            <n-tag :type="systemStatus.api.connected ? 'success' : 'error'">
+                                                                {{ systemStatus.api.connected ? '正常' : '异常' }}
+                                                            </n-tag>
+                                                        </n-descriptions-item>
+                                                        <n-descriptions-item label="模型">
+                                                            {{ systemStatus.api.model }}
+                                                        </n-descriptions-item>
+                                                    </n-descriptions>
+                                                </n-card>
+                                            </n-gi>
+                                        </n-grid>
+                                    </n-tab-pane>
+                                </n-tabs>
+                            </div>
+
+                            <!-- 设置页面 -->
+                            <div v-else-if="activeMenu === 'settings'">
+                                <n-card title="设置" style="max-width: 600px;">
+                                    <n-form :model="settings" label-placement="left" label-width="120px">
+                                        <n-divider>对话设置</n-divider>
+                                        <n-form-item label="温度参数">
+                                            <n-slider v-model:value="settings.temperature" :min="0" :max="2" :step="0.1" />
+                                        </n-form-item>
+                                        <n-form-item label="最大Token">
+                                            <n-input-number v-model:value="settings.maxTokens" :min="100" :max="8000" />
+                                        </n-form-item>
+
+                                        <n-divider>记忆设置</n-divider>
+                                        <n-form-item label="短期记忆上限">
+                                            <n-input-number v-model:value="settings.shortTermMax" :min="5" :max="50" />
+                                        </n-form-item>
+                                        <n-form-item label="中期记忆检索">
+                                            <n-input-number v-model:value="settings.mediumRetrieval" :min="1" :max="10" />
+                                        </n-form-item>
+                                        <n-form-item label="长期记忆检索">
+                                            <n-input-number v-model:value="settings.longRetrieval" :min="1" :max="10" />
+                                        </n-form-item>
+
+                                        <n-space style="margin-top: 20px;">
+                                            <n-button type="primary" @click="saveSettings">保存设置</n-button>
+                                            <n-button @click="resetSettings">重置</n-button>
+                                        </n-space>
+                                    </n-form>
+                                </n-card>
+                            </div>
+                        </n-layout-content>
+                    </n-layout>
+                </n-layout>
+            `
+        });
+
+        const app = createApp({
+            components: { MainApp },
+            setup() {
+                const ready = ref(false);
+                onMounted(() => {
+                    setTimeout(() => { ready.value = true; }, 100);
+                });
+                return { ready, darkTheme: naive.darkTheme, themeOverrides: {
+                    common: { primaryColor: '#409eff', primaryColorHover: '#66b1ff', primaryColorPressed: '#3a8ee6' }
+                }};
+            },
+            template: `
+                <div class="loading-container" v-if="!ready">
+                    <div class="loading-text">AI伙伴 加载中...</div>
+                </div>
+                <n-config-provider v-else :theme="darkTheme" :theme-overrides="themeOverrides">
+                    <n-message-provider>
+                        <n-dialog-provider>
+                            <main-app></main-app>
+                        </n-dialog-provider>
+                    </n-message-provider>
+                </n-config-provider>
+            `
+        });
+
+        app.use(naive);
+        app.mount('#app');
+    </script>
+</body>
+</html>

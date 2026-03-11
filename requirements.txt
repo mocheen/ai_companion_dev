@@ -16,6 +16,12 @@ redis>=5.0.0
 # 注意：我们使用自己封装的LLM客户端，这个SDK仅用于可选的额外功能
 zhipuai>=2.0.0
 
+# Web服务框架
+fastapi>=0.109.0
+uvicorn[standard]>=0.27.0
+python-multipart>=0.0.6
+websockets>=12.0
+
 # 本地向量嵌入模型（可选）
 # 如果在config.yaml中设置vector_db.embedding_type="local"，则需要取消下面的注释
 # sentence-transformers>=2.2.0

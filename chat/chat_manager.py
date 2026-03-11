@@ -5,8 +5,9 @@
 
 import os
 import logging
+import asyncio
 from datetime import datetime
-from typing import Optional, List, Dict, Any, Iterator
+from typing import Optional, List, Dict, Any, Iterator, AsyncIterator
 from .zhipu_client import ZhipuClient
 
 logger = logging.getLogger(__name__)
@@ -302,3 +303,80 @@ class ChatManager:
         """
         logger.info("测试API连接...")
         return self.zhipu_client.test_connection()
+
+    async def chat_stream_async(self, user_message: str) -> AsyncIterator[str]:
+        """
+        与AI对话（异步流式输出）
+
+        Args:
+            user_message: 用户消息
+
+        Yields:
+            流式返回的文本片段
+        """
+        logger.info(f"用户消息: {user_message}")
+
+        # 从记忆系统获取数据
+        short_term_memory = []
+        long_term_memory = ""
+        medium_term_memory = ""
+
+        if self.memory_system:
+            # 获取短期记忆
+            short_term_memory = self.memory_system.get_short_term_memory()
+
+            # 获取长期记忆
+            long_term_memory = self.memory_system.get_long_term_memory(user_message)
+
+            # 获取中期记忆
+            medium_term_memory = self.memory_system.get_medium_term_memory(user_message)
+
+        # 构建消息列表
+        messages = [{"role": "system", "content": self.system_prompt}]
+
+        # 添加用户提示（包含记忆信息）
+        user_prompt = self._build_user_prompt(
+            user_message,
+            short_term_memory,
+            long_term_memory,
+            medium_term_memory
+        )
+        messages.append({"role": "user", "content": user_prompt})
+
+        # 记录debug级别的日志
+        logger.debug(f"系统提示: {self.system_prompt}")
+        logger.debug(f"用户提示: {user_prompt}")
+
+        # 调用智谱API（流式）
+        chat_config = self.config.get("chat", {})
+        full_response = ""
+
+        try:
+            # 在线程池中运行同步的流式请求
+            loop = asyncio.get_event_loop()
+
+            def sync_stream():
+                return list(self.zhipu_client.chat_stream(
+                    messages=messages,
+                    temperature=chat_config.get("temperature", 0.7),
+                    max_tokens=chat_config.get("max_tokens", 2000),
+                    timeout=chat_config.get("timeout", 30)
+                ))
+
+            chunks = await loop.run_in_executor(None, sync_stream)
+
+            for chunk in chunks:
+                full_response += chunk
+                yield chunk
+
+            # 只在INFO级别显示摘要（前100字符）
+            response_preview = full_response[:100] + "..." if len(full_response) > 100 else full_response
+            logger.info(f"AI回复: {response_preview}")
+
+            # 将对话记录提供给记忆系统
+            if self.memory_system:
+                self.memory_system.add_conversation(user_message, full_response)
+
+        except Exception as e:
+            logger.error(f"流式对话失败: {e}")
+            raise
