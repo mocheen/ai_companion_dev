@@ -427,6 +427,25 @@
                     return colors[level] || '#c9d1d9';
                 };
 
+                // 定时刷新系统状态
+                let statusRefreshTimer = null;
+
+                const startStatusRefresh = () => {
+                    // 每5秒刷新一次系统状态
+                    statusRefreshTimer = setInterval(() => {
+                        // 使用轻量级的状态刷新，不测试API连接
+                        loadSystemStatusLight();
+                    }, 5000);
+                };
+
+                const loadSystemStatusLight = async () => {
+                    try {
+                        const response = await fetch('/api/status?light=true');
+                        const data = await response.json();
+                        if (data.success) Object.assign(systemStatus, data.status);
+                    } catch (e) { console.error('加载系统状态失败:', e); }
+                };
+
                 onMounted(async () => {
                     const savedSettings = localStorage.getItem('ai-companion-settings');
                     if (savedSettings) Object.assign(settings, JSON.parse(savedSettings));
@@ -435,6 +454,9 @@
                     connectLogWebSocket();
 
                     await Promise.all([loadHistory(), loadMemories(), loadSystemStatus()]);
+
+                    // 启动定时刷新
+                    startStatusRefresh();
                 });
 
                 return {

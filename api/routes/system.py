@@ -6,7 +6,7 @@ import logging
 from typing import Optional, Dict, Any
 from datetime import datetime
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 
 from ..app import get_config, get_memory_system, get_command_manager, get_chat_manager
@@ -61,8 +61,12 @@ async def execute_command(request: CommandRequest):
 
 
 @router.get("/status", response_model=SystemStatusResponse)
-async def get_system_status():
-    """获取系统状态"""
+async def get_system_status(light: bool = Query(False, description="轻量级查询，跳过API连接测试")):
+    """获取系统状态
+
+    Args:
+        light: 轻量级模式，不测试API连接（避免消耗token）
+    """
     try:
         memory_system = get_memory_system()
         chat_manager = get_chat_manager()
@@ -112,7 +116,12 @@ async def get_system_status():
         if chat_manager and config:
             api_config = config.get("api", {})
             status["api"]["model"] = api_config.get("model", "unknown")
-            status["api"]["connected"] = chat_manager.test_api_connection()
+            # 轻量级模式下跳过API连接测试，避免消耗token
+            if not light:
+                status["api"]["connected"] = chat_manager.test_api_connection()
+            else:
+                # 保留上次的连接状态，如果没有则默认为True
+                status["api"]["connected"] = True
 
         return SystemStatusResponse(
             success=True,
