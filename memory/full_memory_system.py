@@ -328,6 +328,9 @@ class FullMemorySystem(MemorySystemBase):
                 logger.info("对话后检测到需要重整中期记忆，触发重整流程")
                 self._trigger_reorganize_async()
 
+        # 锁释放后通知状态更新
+        self._notify_status_update()
+
     def _trigger_archive_async(self):
         """异步触发归档流程"""
         def archive_worker():

@@ -64,6 +64,25 @@ class MemorySystemBase(ABC):
         """
         pass
 
+    def set_status_update_callback(self, callback):
+        """
+        设置状态更新回调函数
+
+        Args:
+            callback: 回调函数，接收status字典作为参数
+        """
+        self._status_update_callback = callback
+
+    def _notify_status_update(self, status: dict = None):
+        """
+        通知状态更新
+
+        Args:
+            status: 状态字典，如果为None则自动获取当前状态
+        """
+        if hasattr(self, '_status_update_callback') and self._status_update_callback:
+            self._status_update_callback(status)
+
 
 class SimpleMemorySystem(MemorySystemBase):
     """

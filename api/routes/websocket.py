@@ -24,6 +24,7 @@ class ConnectionManager:
     def __init__(self):
         self.chat_connections: Set[WebSocket] = set()
         self.log_connections: Set[WebSocket] = set()
+        self.status_connections: Set[WebSocket] = set()
         self.log_buffer: deque = deque(maxlen=500)  # 日志缓冲区
 
     async def connect_chat(self, websocket: WebSocket):
@@ -55,6 +56,17 @@ class ConnectionManager:
         self.log_connections.discard(websocket)
         logger.info(f"日志WebSocket断开，当前连接数: {len(self.log_connections)}")
 
+    async def connect_status(self, websocket: WebSocket):
+        """连接状态WebSocket"""
+        await websocket.accept()
+        self.status_connections.add(websocket)
+        logger.info(f"状态WebSocket连接建立，当前连接数: {len(self.status_connections)}")
+
+    def disconnect_status(self, websocket: WebSocket):
+        """断开状态WebSocket"""
+        self.status_connections.discard(websocket)
+        logger.info(f"状态WebSocket断开，当前连接数: {len(self.status_connections)}")
+
     async def broadcast_log(self, log_entry: dict):
         """广播日志消息"""
         self.log_buffer.append(log_entry)
@@ -68,6 +80,24 @@ class ConnectionManager:
 
         for conn in disconnected:
             self.log_connections.discard(conn)
+
+    async def broadcast_status(self, status: dict):
+        """广播系统状态更新"""
+        disconnected = set()
+        status_message = {
+            "type": "status_update",
+            "timestamp": datetime.now().isoformat(),
+            "status": status
+        }
+
+        for connection in self.status_connections:
+            try:
+                await connection.send_json(status_message)
+            except Exception:
+                disconnected.add(connection)
+
+        for conn in disconnected:
+            self.status_connections.discard(conn)
 
 
 # 全局连接管理器
@@ -224,3 +254,32 @@ async def websocket_logs(websocket: WebSocket):
     except Exception as e:
         logger.error(f"日志WebSocket错误: {e}", exc_info=True)
         manager.disconnect_log(websocket)
+
+
+@router.websocket("/status")
+async def websocket_status(websocket: WebSocket):
+    """
+    系统状态WebSocket
+
+    服务端推送格式:
+        - {"type": "status_update", "timestamp": "...", "status": {...}}
+    """
+    await manager.connect_status(websocket)
+
+    try:
+        while True:
+            data = await websocket.receive_text()
+
+            try:
+                message = json.loads(data)
+            except json.JSONDecodeError:
+                continue
+
+            if message.get("type") == "ping":
+                await websocket.send_json({"type": "pong"})
+
+    except WebSocketDisconnect:
+        manager.disconnect_status(websocket)
+    except Exception as e:
+        logger.error(f"状态WebSocket错误: {e}", exc_info=True)
+        manager.disconnect_status(websocket)

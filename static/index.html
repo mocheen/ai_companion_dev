@@ -157,6 +157,7 @@
                 const messageContainer = ref(null);
                 const ws = ref(null);
                 const logWs = ref(null);
+                const statusWs = ref(null);
 
                 // 记忆
                 const mediumTermMemories = ref([]);
@@ -211,7 +212,11 @@
                 });
 
                 // 方法
-                const handleMenuChange = (key) => { activeMenu.value = key; };
+                const handleMenuChange = (key) => {
+                    activeMenu.value = key;
+                    // 切换页面时触发status更新
+                    triggerStatusUpdate();
+                };
 
                 const formatTime = (timestamp) => {
                     if (!timestamp) return '';
@@ -250,10 +255,20 @@
                                 const lastMsg = messages.value[messages.value.length - 1];
                                 if (lastMsg.role === 'assistant') {
                                     lastMsg.content += data.content;
+                                    // 强制更新视图
+                                    nextTick(() => {
+                                        scrollToBottom();
+                                    });
                                 }
                             }
                         } else if (data.type === 'done') {
                             isTyping.value = false;
+                            if (messages.value.length > 0) {
+                                const lastMsg = messages.value[messages.value.length - 1];
+                                if (lastMsg.role === 'assistant') {
+                                    lastMsg.streaming = false;
+                                }
+                            }
                             scrollToBottom();
                         } else if (data.type === 'error') {
                             isTyping.value = false;
@@ -294,12 +309,35 @@
                     logWs.value.onclose = () => setTimeout(connectLogWebSocket, 5000);
                 };
 
+                const connectStatusWebSocket = () => {
+                    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+                    const wsUrl = `${protocol}//${window.location.host}/ws/status`;
+                    statusWs.value = new WebSocket(wsUrl);
+
+                    statusWs.value.onopen = () => console.log('状态WebSocket连接已建立');
+
+                    statusWs.value.onmessage = (event) => {
+                        const data = JSON.parse(event.data);
+                        if (data.type === 'status_update') {
+                            Object.assign(systemStatus, data.status);
+                        }
+                    };
+
+                    statusWs.value.onclose = () => {
+                        console.log('状态WebSocket连接已关闭，5秒后重连...');
+                        setTimeout(connectStatusWebSocket, 5000);
+                    };
+
+                    statusWs.value.onerror = (error) => console.error('状态WebSocket错误:', error);
+                };
+
                 const sendMessage = () => {
                     const content = inputMessage.value.trim();
                     if (!content || isTyping.value) return;
 
-                    messages.value.push({ role: 'user', content: content, timestamp: new Date().toISOString() });
-                    messages.value.push({ role: 'assistant', content: '', timestamp: new Date().toISOString() });
+                    // 使用reactive确保消息对象是响应式的
+                    messages.value.push(reactive({ role: 'user', content: content, timestamp: new Date().toISOString() }));
+                    messages.value.push(reactive({ role: 'assistant', content: '', timestamp: new Date().toISOString(), streaming: true }));
 
                     inputMessage.value = '';
                     isTyping.value = true;
@@ -308,6 +346,9 @@
                     if (ws.value && ws.value.readyState === WebSocket.OPEN) {
                         ws.value.send(JSON.stringify({ type: 'message', content: content }));
                     }
+
+                    // 发送消息后触发status更新
+                    triggerStatusUpdate();
                 };
 
                 const loadHistory = async () => {
@@ -349,6 +390,7 @@
                                 if (data.success) {
                                     message.success('删除成功');
                                     loadMemories();
+                                    triggerStatusUpdate();
                                 }
                             } catch (e) { message.error('删除失败'); }
                         }
@@ -366,6 +408,7 @@
                         });
                         const data = await response.json();
                         commandOutput.value = data.result;
+                        triggerStatusUpdate();
                     } catch (e) {
                         commandOutput.value = `错误: ${e.message}`;
                     }
@@ -387,6 +430,13 @@
                     else if (activeMenu.value === 'system') loadSystemStatus();
                     loadSystemStatus();
                     message.success('已刷新');
+                };
+
+                const triggerStatusUpdate = () => {
+                    // 触发status更新（通过WebSocket）
+                    if (statusWs.value && statusWs.value.readyState === WebSocket.OPEN) {
+                        statusWs.value.send(JSON.stringify({ type: 'ping' }));
+                    }
                 };
 
                 const saveSettings = () => {
@@ -427,36 +477,15 @@
                     return colors[level] || '#c9d1d9';
                 };
 
-                // 定时刷新系统状态
-                let statusRefreshTimer = null;
-
-                const startStatusRefresh = () => {
-                    // 每5秒刷新一次系统状态
-                    statusRefreshTimer = setInterval(() => {
-                        // 使用轻量级的状态刷新，不测试API连接
-                        loadSystemStatusLight();
-                    }, 5000);
-                };
-
-                const loadSystemStatusLight = async () => {
-                    try {
-                        const response = await fetch('/api/status?light=true');
-                        const data = await response.json();
-                        if (data.success) Object.assign(systemStatus, data.status);
-                    } catch (e) { console.error('加载系统状态失败:', e); }
-                };
-
                 onMounted(async () => {
                     const savedSettings = localStorage.getItem('ai-companion-settings');
                     if (savedSettings) Object.assign(settings, JSON.parse(savedSettings));
 
                     connectWebSocket();
                     connectLogWebSocket();
+                    connectStatusWebSocket();
 
                     await Promise.all([loadHistory(), loadMemories(), loadSystemStatus()]);
-
-                    // 启动定时刷新
-                    startStatusRefresh();
                 });
 
                 return {
@@ -469,7 +498,8 @@
                     handleMenuChange, formatTime, formatDateTime, renderMarkdown,
                     sendMessage, deleteMemory, executeCommand, clearLogs,
                     refreshData, saveSettings, resetSettings,
-                    getEmotionType, getEmotionText, getMemoryTypeColor, getMemoryTypeText, getLogColor
+                    getEmotionType, getEmotionText, getMemoryTypeColor, getMemoryTypeText, getLogColor,
+                    triggerStatusUpdate
                 };
             },
             template: `
@@ -537,7 +567,10 @@
                                                         {{ msg.role === 'user' ? '你' : 'AI' }}
                                                     </n-text>
                                                 </template>
-                                                <div class="markdown-content" v-html="renderMarkdown(msg.content)"></div>
+                                                <div class="markdown-content">
+                                                    <span v-if="msg.streaming" style="white-space: pre-wrap;">{{ msg.content }}</span>
+                                                    <span v-else v-html="renderMarkdown(msg.content)"></span>
+                                                </div>
                                             </n-card>
                                         </div>
                                     </div>

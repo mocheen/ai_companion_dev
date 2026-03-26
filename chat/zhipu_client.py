@@ -203,28 +203,36 @@ class ZhipuClient:
 
             response.raise_for_status()
 
+            logger.debug(f"开始解析流式响应...")
+
             for line in response.iter_lines():
                 if not line:
                     continue
 
                 line = line.decode('utf-8')
+                logger.debug(f"收到流式数据行: {line[:100]}")
 
                 if line.startswith('data: '):
                     data = line[6:]
 
                     if data == '[DONE]':
+                        logger.debug("收到 [DONE] 标记，流式响应结束")
                         break
 
                     try:
                         chunk = json.loads(data)
+                        logger.debug(f"解析后的chunk: {chunk}")
                         if 'choices' in chunk and len(chunk['choices']) > 0:
                             delta = chunk['choices'][0].get('delta', {})
                             content = delta.get('content', '')
                             if content:
+                                logger.debug(f"提取到content: {content}")
                                 yield content
                     except json.JSONDecodeError as e:
                         logger.warning(f"解析流式响应失败: {e}, data: {data}")
                         continue
+
+            logger.debug("流式响应解析完成")
 
         except requests.exceptions.Timeout:
             logger.error(f"请求超时 (>{timeout}秒)")

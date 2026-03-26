@@ -60,6 +60,74 @@ async def execute_command(request: CommandRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+def get_system_status_internal(light: bool = False) -> dict:
+    """
+    获取系统状态（内部函数，用于回调）
+
+    Args:
+        light: 轻量级模式，不测试API连接
+
+    Returns:
+        状态字典
+    """
+    memory_system = get_memory_system()
+    chat_manager = get_chat_manager()
+    config = get_config()
+
+    status = {
+        "memory": {
+            "short_term": 0,
+            "short_term_max": 0,
+            "medium_term": 0,
+            "long_term": 0,
+            "type": "unknown"
+        },
+        "agent": {
+            "archive": "idle",
+            "reorganize": "idle"
+        },
+        "api": {
+            "connected": False,
+            "model": "",
+            "response_time": 0
+        },
+        "uptime": datetime.now().isoformat()
+    }
+
+    if memory_system:
+        # 短期记忆
+        short_term = memory_system.get_short_term_memory()
+        status["memory"]["short_term"] = len(short_term)
+        status["memory"]["short_term_max"] = getattr(memory_system, 'max_messages', 0)
+        status["memory"]["type"] = type(memory_system).__name__
+
+        # 中长期记忆
+        if hasattr(memory_system, 'vector_store'):
+            try:
+                medium_memories = memory_system.vector_store.get_all_medium_term_memories()
+                status["memory"]["medium_term"] = len(medium_memories)
+            except Exception:
+                pass
+
+            try:
+                long_memories = memory_system.vector_store.get_all_long_term_memories()
+                status["memory"]["long_term"] = len(long_memories)
+            except Exception:
+                pass
+
+    if chat_manager and config:
+        api_config = config.get("api", {})
+        status["api"]["model"] = api_config.get("model", "unknown")
+        # 轻量级模式下跳过API连接测试，避免消耗token
+        if not light:
+            status["api"]["connected"] = chat_manager.test_api_connection()
+        else:
+            # 保留上次的连接状态，如果没有则默认为True
+            status["api"]["connected"] = True
+
+    return status
+
+
 @router.get("/status", response_model=SystemStatusResponse)
 async def get_system_status(light: bool = Query(False, description="轻量级查询，跳过API连接测试")):
     """获取系统状态
@@ -68,61 +136,7 @@ async def get_system_status(light: bool = Query(False, description="轻量级查
         light: 轻量级模式，不测试API连接（避免消耗token）
     """
     try:
-        memory_system = get_memory_system()
-        chat_manager = get_chat_manager()
-        config = get_config()
-
-        status = {
-            "memory": {
-                "short_term": 0,
-                "short_term_max": 0,
-                "medium_term": 0,
-                "long_term": 0,
-                "type": "unknown"
-            },
-            "agent": {
-                "archive": "idle",
-                "reorganize": "idle"
-            },
-            "api": {
-                "connected": False,
-                "model": "",
-                "response_time": 0
-            },
-            "uptime": datetime.now().isoformat()
-        }
-
-        if memory_system:
-            # 短期记忆
-            short_term = memory_system.get_short_term_memory()
-            status["memory"]["short_term"] = len(short_term)
-            status["memory"]["short_term_max"] = getattr(memory_system, 'max_messages', 0)
-            status["memory"]["type"] = type(memory_system).__name__
-
-            # 中长期记忆
-            if hasattr(memory_system, 'vector_store'):
-                try:
-                    medium_memories = memory_system.vector_store.get_all_medium_term_memories()
-                    status["memory"]["medium_term"] = len(medium_memories)
-                except Exception:
-                    pass
-
-                try:
-                    long_memories = memory_system.vector_store.get_all_long_term_memories()
-                    status["memory"]["long_term"] = len(long_memories)
-                except Exception:
-                    pass
-
-        if chat_manager and config:
-            api_config = config.get("api", {})
-            status["api"]["model"] = api_config.get("model", "unknown")
-            # 轻量级模式下跳过API连接测试，避免消耗token
-            if not light:
-                status["api"]["connected"] = chat_manager.test_api_connection()
-            else:
-                # 保留上次的连接状态，如果没有则默认为True
-                status["api"]["connected"] = True
-
+        status = get_system_status_internal(light)
         return SystemStatusResponse(
             success=True,
             status=status

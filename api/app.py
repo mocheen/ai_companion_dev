@@ -25,6 +25,7 @@ _config = None
 _chat_manager: Optional[ChatManager] = None
 _memory_system = None
 _command_manager: Optional[CommandManager] = None
+_status_manager = None
 
 
 def get_config():
@@ -51,6 +52,12 @@ def get_command_manager() -> CommandManager:
     """获取命令管理器"""
     global _command_manager
     return _command_manager
+
+
+def get_status_manager():
+    """获取状态管理器"""
+    global _status_manager
+    return _status_manager
 
 
 @asynccontextmanager
@@ -91,6 +98,32 @@ async def lifespan(app: FastAPI):
 
     # 将记忆系统设置到对话管理器
     _chat_manager.set_memory_system(_memory_system)
+
+    # 设置状态更新回调
+    from .routes.websocket import manager as ws_manager
+    global _status_manager
+    _status_manager = ws_manager
+
+    def status_update_callback(status: dict = None):
+        """状态更新回调函数"""
+        try:
+            import asyncio
+            loop = asyncio.get_event_loop()
+            if loop.is_running():
+                # 如果status为None，则获取当前状态
+                if status is None:
+                    from .routes.system import get_system_status_internal
+                    status = get_system_status_internal()
+                # 使用call_soon_threadsafe来安全地调度异步任务
+                asyncio.run_coroutine_threadsafe(
+                    ws_manager.broadcast_status(status), 
+                    loop
+                )
+        except Exception as e:
+            logger.error(f"广播状态更新失败: {e}")
+
+    _memory_system.set_status_update_callback(status_update_callback)
+    logger.info("状态更新回调已设置")
 
     # 初始化命令管理器
     command_config = config.get("commands", {})

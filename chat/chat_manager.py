@@ -356,18 +356,24 @@ class ChatManager:
             loop = asyncio.get_event_loop()
 
             def sync_stream():
-                return list(self.zhipu_client.chat_stream(
+                logger.debug("开始执行同步流式请求...")
+                result = list(self.zhipu_client.chat_stream(
                     messages=messages,
                     temperature=chat_config.get("temperature", 0.7),
                     max_tokens=chat_config.get("max_tokens", 2000),
                     timeout=chat_config.get("timeout", 30)
                 ))
+                logger.debug(f"同步流式请求完成，获得 {len(result)} 个chunks")
+                return result
 
             chunks = await loop.run_in_executor(None, sync_stream)
+            logger.debug(f"开始发送 {len(chunks)} 个chunks到WebSocket")
 
             for chunk in chunks:
                 full_response += chunk
                 yield chunk
+
+            logger.debug(f"所有chunks发送完成，总长度: {len(full_response)}")
 
             # 只在INFO级别显示摘要（前100字符）
             response_preview = full_response[:100] + "..." if len(full_response) > 100 else full_response
