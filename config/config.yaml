@@ -1,12 +1,12 @@
 # API配置
 api:
-  api_key: "YOUR_API_KEY_HERE"
+  api_key: "${API_KEY}"
   model: "glm-4.7"
   base_url: "https://open.bigmodel.cn/api/paas/v4/"
 
 # Agent专用API配置（用于记忆归档和重整的自主代理）
 agent_api:
-  api_key: "YOUR_API_KEY_HERE"
+  api_key: "${AGENT_API_KEY}"
   model: "glm-4.7"
   base_url: "https://open.bigmodel.cn/api/paas/v4/"
   tool_choice: "auto"
@@ -16,15 +16,23 @@ agent:
   # 归档Agent配置
   archive:
     max_iterations: 20  # 归档Agent最大迭代次数（防止无限循环）
-  
+
   # 重整Agent配置
   reorganize:
     max_iterations: 40  # 重整Agent最大迭代次数（防止无限循环）
 
+# Redis配置
+redis:
+  host: "${REDIS_HOST}"
+  port: ${REDIS_PORT}
+  db: ${REDIS_DB}
+  password: "${REDIS_PASSWORD}"  # 如果有密码，填在这里
+  prefix: "${REDIS_PREFIX}"  # Redis键的前缀
+
 # 短期记忆配置
 short_term_memory:
   max_turns: 20 # 短期记忆最大对话轮数
-  persist_file: "data/short_term_memory.json"  # 短期记忆持久化文件路径
+  persist_file: "data/short_term_memory.json"  # 短期记忆持久化文件路径（local模式使用）
 
 # 记忆系统配置
 memory_system:
@@ -50,25 +58,32 @@ logging:
   log_file: "ai_companion.log"
   enable_file: true  # 是否启用文件日志（true=启用，false=仅控制台输出）
 
-# 记忆检索配���
+# 记忆检索配置
 memory_retrieval:
   medium_term_count: 3  # 检索的中期记忆卡片数量
   long_term_count: 2    # 检索的长期记忆卡片数量
 
 # 向量数据库配置
 vector_db:
+  # ChromaDB模式: "local" (本地文件) 或 "remote" (远程服务)
+  mode: "${VECTOR_DB_MODE}"
+
+  # 远程ChromaDB服务配置（当mode="remote"时使用）
+  remote_host: "${CHROMA_HOST}"  # 远程ChromaDB服务地址
+  remote_port: ${CHROMA_PORT}         # 远程ChromaDB服务端口
+
   # 嵌入方式: "local" (本地模型) 或 "api" (API服务)
-  embedding_type: "api"
+  embedding_type: "${EMBEDDING_TYPE}"
 
   # API嵌入配置（当embedding_type="api"时使用）
-  embedding_model: "embedding-3"  # 智谱AI的embedding模型
-  embedding_api_key: "YOUR_API_KEY_HERE"
+  embedding_model: "${EMBEDDING_MODEL}"
+  embedding_api_key: "${EMBEDDING_API_KEY}"
   embedding_base_url: "https://open.bigmodel.cn/api/paas/v4/"
 
   # 本地嵌入配置（当embedding_type="local"时使用）
   local_embedding_model: "shibing624/text2vec-base-chinese"  # 中文嵌入模型
 
-  # ChromaDB配置
+  # ChromaDB本地配置（当mode="local"时使用）
   persistence_dir: "data/chromadb"  # ChromaDB持久化存储目录
   collection_medium: "medium_term_memories"  # 中期记忆集合名称
   collection_long: "long_term_memories"  # 长期记忆集合名称

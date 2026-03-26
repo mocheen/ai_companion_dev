@@ -6,6 +6,9 @@ requests>=2.31.0
 # YAML配置文件解析
 PyYAML>=6.0.0
 
+# 环境变量加载
+python-dotenv>=1.0.0
+
 # 向量数据库
 chromadb>=0.4.0
 

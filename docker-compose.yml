@@ -1,6 +1,36 @@
 version: '3.8'
 
 services:
+  # Redis 服务
+  redis:
+    image: redis:7-alpine
+    container_name: ai-companion-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    networks:
+      - ai-companion-network
+    restart: unless-stopped
+    command: redis-server --appendonly yes
+
+  # ChromaDB 服务
+  chromadb:
+    image: chromadb/chroma:latest
+    container_name: ai-companion-chroma
+    ports:
+      - "8001:8000"
+    volumes:
+      - chroma-data:/chroma/chroma
+    networks:
+      - ai-companion-network
+    restart: unless-stopped
+    environment:
+      - CHROMA_SERVER_HOST=0.0.0.0
+      - CHROMA_SERVER_HTTP_PORT=8000
+      - ALLOW_RESET=TRUE
+
+  # AI Companion 主应用
   ai-companion:
     build:
       context: .
@@ -14,7 +44,36 @@ services:
       - ./logs:/app/logs
       - ./prompts:/app/prompts
     environment:
+      # 时区
       - TZ=Asia/Shanghai
+      
+      # ===== API 配置 =====
+      - API_KEY=${API_KEY}
+      - AGENT_API_KEY=${AGENT_API_KEY}
+      
+      # ===== Redis 配置 =====
+      - REDIS_HOST=${REDIS_HOST}
+      - REDIS_PORT=${REDIS_PORT}
+      - REDIS_DB=${REDIS_DB}
+      - REDIS_PASSWORD=${REDIS_PASSWORD}
+      - REDIS_PREFIX=${REDIS_PREFIX}
+      
+      # ===== ChromaDB 配置 =====
+      - CHROMA_HOST=${CHROMA_HOST}
+      - CHROMA_PORT=${CHROMA_PORT}
+      - VECTOR_DB_MODE=${VECTOR_DB_MODE}
+      
+      # ===== Embedding 配置 =====
+      - EMBEDDING_TYPE=${EMBEDDING_TYPE}
+      - EMBEDDING_MODEL=${EMBEDDING_MODEL}
+      - EMBEDDING_API_KEY=${EMBEDDING_API_KEY}
+    depends_on:
+      redis:
+        condition: service_started
+      chromadb:
+        condition: service_started
+    networks:
+      - ai-companion-network
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "python", "-c", "import requests; requests.get('http://localhost:8000/health')"]
@@ -22,8 +81,10 @@ services:
       timeout: 10s
       retries: 3
       start_period: 10s
-    networks:
-      - ai-companion-network
+
+volumes:
+  redis-data:
+  chroma-data:
 
 networks:
   ai-companion-network:
