@@ -17,6 +17,12 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      # 设置 Python 3.11
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+
       # 登录阿里云容器镜像服务
       - name: Login to Aliyun ACR
         uses: docker/login-action@v2
