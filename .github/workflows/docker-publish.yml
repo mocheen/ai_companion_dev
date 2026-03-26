@@ -24,12 +24,6 @@ jobs:
           python-version: '3.11'
           cache: 'pip'
 
-      # 安装依赖并运行测试（可选）
-      - name: Install dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install -r requirements.txt
-
       # 登录阿里云容器镜像服务
       - name: Login to Aliyun ACR
         uses: docker/login-action@v2
