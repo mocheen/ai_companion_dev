@@ -59,7 +59,7 @@ python main.py
 python run_web.py
 ```
 
-启动后访问 `http://localhost:8000` 使用Web界面。
+启动后访问 `http://localhost:5163` 使用Web界面。
 
 #### Docker模式
 

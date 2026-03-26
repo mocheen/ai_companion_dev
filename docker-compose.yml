@@ -37,7 +37,7 @@ services:
       dockerfile: Dockerfile
     container_name: ai-companion
     ports:
-      - "8000:8000"
+      - "5163:5163"
     volumes:
       - ./config:/app/config
       - ./data:/app/data
@@ -76,7 +76,7 @@ services:
       - ai-companion-network
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "python", "-c", "import requests; requests.get('http://localhost:8000/health')"]
+      test: ["CMD", "python", "-c", "import requests; requests.get('http://localhost:5163/health')"]
       interval: 30s
       timeout: 10s
       retries: 3

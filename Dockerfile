@@ -27,11 +27,11 @@ COPY . .
 RUN mkdir -p logs data
 
 # 暴露端口
-EXPOSE 8000
+EXPOSE 5163
 
 # 健康检查
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
-    CMD python -c "import requests; requests.get('http://localhost:8000/health')" || exit 1
+    CMD python -c "import requests; requests.get('http://localhost:5163/health')" || exit 1
 
 # 启动命令
 CMD ["python", "run_web.py"]
