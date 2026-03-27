@@ -199,11 +199,17 @@ async def websocket_chat(websocket: WebSocket):
                     async_generator = chat_manager.chat_stream_async(user_content)
 
                     async for chunk in async_generator:
-                        full_response += chunk
-                        await websocket.send_json({
-                            "type": "chunk",
-                            "content": chunk
-                        })
+                        if chunk["type"] == "thinking":
+                            await websocket.send_json({
+                                "type": "thinking_chunk",
+                                "content": chunk["content"]
+                            })
+                        else:
+                            full_response += chunk["content"]
+                            await websocket.send_json({
+                                "type": "chunk",
+                                "content": chunk["content"]
+                            })
 
                     await websocket.send_json({
                         "type": "done",
