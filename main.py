@@ -65,13 +65,6 @@ def main():
     # 注册默认命令（传入记忆系统以支持记忆相关命令）
     command_manager.register_default_commands(memory_system)
 
-    # 测试API连接
-    print("正在测试API连接...")
-    if not chat_manager.test_api_connection():
-        print("错误：API连接失败，请检查API密钥和网络连接")
-        sys.exit(1)
-    print("API连接成功！\n")
-
     # 交互循环
     print("=" * 50)
     print(f"AI伙伴已启动！输入 '{command_prefix}help' 查看可用命令")
