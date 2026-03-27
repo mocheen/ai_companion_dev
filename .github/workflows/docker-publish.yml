@@ -31,15 +31,37 @@ jobs:
           username: ${{ secrets.ALIYUN_ACR_USERNAME }}
           password: ${{ secrets.ALIYUN_ACR_PASSWORD }}
 
-      # 构建并推送镜像
-      - name: Build and push
-        uses: docker/build-push-action@v4
+      # 配置 Docker Buildx
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      # 构建镜像
+      - name: Build image
+        uses: docker/build-push-action@v6
         with:
-          context: .  # Dockerfile 在根目录
-          tags: |
-            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
-            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
-          push: true
+          context: .
+          load: true
+          tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
+
+      # 推送镜像（带重试）
+      - name: Push image
+        run: |
+          MAX_RETRIES=3
+          RETRY_DELAY=10
+          for i in $(seq 1 $MAX_RETRIES); do
+            echo "尝试推送镜像 ($i/$MAX_RETRIES)..."
+            if docker push ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}; then
+              echo "推送成功，标记 latest 标签..."
+              docker tag ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }} ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
+              docker push ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
+              echo "完成！"
+              exit 0
+            fi
+            echo "推送失败，${RETRY_DELAY}秒后重试..."
+            sleep $RETRY_DELAY
+          done
+          echo "推送失败，已重试 $MAX_RETRIES 次"
+          exit 1
 
       # 配置 SSH 环境
       - name: Setup SSH

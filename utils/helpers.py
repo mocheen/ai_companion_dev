@@ -17,6 +17,7 @@ def load_env_file():
     加载 .env 文件中的环境变量
     
     从项目根目录查找并加载 .env 文件
+    如果 .env 文件不存在，则使用系统环境变量
     """
     # 查找项目根目录（包含 config 文件夹的目录）
     current_dir = Path(__file__).parent
@@ -45,6 +46,10 @@ def load_env_file():
                     elif value.startswith("'") and value.endswith("'"):
                         value = value[1:-1]
                     os.environ[key] = value
+    else:
+        # .env 文件不存在时，直接使用系统环境变量
+        # 这样可以支持 Docker 容器通过 docker-compose 设置的环境变量
+        pass
 
 
 def replace_env_vars(obj: Any) -> Any:

@@ -47,7 +47,6 @@ logs/
 *.log
 
 # Local data (keep config templates)
-config/config_local.yaml
 data/chromadb/
 
 # OS

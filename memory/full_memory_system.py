@@ -227,7 +227,8 @@ class FullMemorySystem(MemorySystemBase):
         logger.info(f"已更新上次重整时间: {state['last_reorganize_time']}")
 
     def get_short_term_memory(self) -> List[ChatMessage]:
-        """获取短期记忆"""
+        """获取短期记忆（从Redis重新加载）"""
+        self.short_term_memory = self._load_short_term_memory()
         with self.lock:
             return [
                 ChatMessage(
