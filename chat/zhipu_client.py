@@ -57,7 +57,8 @@ class ZhipuClient:
         if stream:
             full_response = ""
             for chunk in self.chat_stream(messages, temperature, max_tokens, timeout, tools, tool_choice):
-                full_response += chunk
+                if chunk["type"] == "content":
+                    full_response += chunk["content"]
             return full_response
         else:
             return self._chat_non_stream(messages, temperature, max_tokens, timeout, tools, tool_choice)
@@ -160,7 +161,7 @@ class ZhipuClient:
                     max_tokens: int = 2000,
                     timeout: int = 30,
                     tools: Optional[List[Dict[str, Any]]] = None,
-                    tool_choice: Optional[str] = None) -> Iterator[str]:
+                    tool_choice: Optional[str] = None) -> Iterator[Dict[str, str]]:
         """
         流式聊天请求
 
@@ -173,7 +174,7 @@ class ZhipuClient:
             tool_choice: 工具选择策略
 
         Yields:
-            流式返回的文本片段
+            字典，包含 type("thinking"或"content") 和 content 字段
         """
         url = f"{self.base_url}chat/completions"
 
@@ -224,10 +225,16 @@ class ZhipuClient:
                         logger.debug(f"解析后的chunk: {chunk}")
                         if 'choices' in chunk and len(chunk['choices']) > 0:
                             delta = chunk['choices'][0].get('delta', {})
+                            # 优先提取 reasoning_content（思考内容）
+                            reasoning_content = delta.get('reasoning_content', '')
+                            if reasoning_content:
+                                logger.debug(f"提取到reasoning_content: {reasoning_content[:50]}")
+                                yield {"type": "thinking", "content": reasoning_content}
+                            # 提取 content（回复内容）
                             content = delta.get('content', '')
                             if content:
                                 logger.debug(f"提取到content: {content}")
-                                yield content
+                                yield {"type": "content", "content": content}
                     except json.JSONDecodeError as e:
                         logger.warning(f"解析流式响应失败: {e}, data: {data}")
                         continue

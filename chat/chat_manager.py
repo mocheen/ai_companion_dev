@@ -225,7 +225,7 @@ class ChatManager:
 
         return response
 
-    def chat_stream(self, user_message: str) -> Iterator[str]:
+    def chat_stream(self, user_message: str) -> Iterator[Dict[str, str]]:
         """
         与AI对话（流式输出）
 
@@ -233,7 +233,7 @@ class ChatManager:
             user_message: 用户消息
 
         Yields:
-            流式返回的文本片段
+            字典，包含 type("thinking"或"content") 和 content 字段
         """
         logger.info(f"用户消息: {user_message}")
 
@@ -279,7 +279,8 @@ class ChatManager:
                 max_tokens=chat_config.get("max_tokens", 2000),
                 timeout=chat_config.get("timeout", 30)
             ):
-                full_response += chunk
+                if chunk["type"] == "content":
+                    full_response += chunk["content"]
                 yield chunk
 
             # 只在INFO级别显示摘要（前100字符）
@@ -304,7 +305,7 @@ class ChatManager:
         logger.info("测试API连接...")
         return self.zhipu_client.test_connection()
 
-    async def chat_stream_async(self, user_message: str) -> AsyncIterator[str]:
+    async def chat_stream_async(self, user_message: str) -> AsyncIterator[Dict[str, str]]:
         """
         与AI对话（异步流式输出）
 
@@ -312,7 +313,7 @@ class ChatManager:
             user_message: 用户消息
 
         Yields:
-            流式返回的文本片段
+            字典，包含 type("thinking"或"content") 和 content 字段
         """
         logger.info(f"用户消息: {user_message}")
 
@@ -352,26 +353,38 @@ class ChatManager:
         full_response = ""
 
         try:
-            # 在线程池中运行同步的流式请求
-            loop = asyncio.get_event_loop()
+            # 用 Queue 桥接同步流式请求和异步生成器，实现真正的逐 chunk 推送
+            queue = asyncio.Queue()
+            stream_error = None
 
             def sync_stream():
-                logger.debug("开始执行同步流式请求...")
-                result = list(self.zhipu_client.chat_stream(
-                    messages=messages,
-                    temperature=chat_config.get("temperature", 0.7),
-                    max_tokens=chat_config.get("max_tokens", 2000),
-                    timeout=chat_config.get("timeout", 30)
-                ))
-                logger.debug(f"同步流式请求完成，获得 {len(result)} 个chunks")
-                return result
+                nonlocal stream_error
+                try:
+                    for chunk in self.zhipu_client.chat_stream(
+                        messages=messages,
+                        temperature=chat_config.get("temperature", 0.7),
+                        max_tokens=chat_config.get("max_tokens", 2000),
+                        timeout=chat_config.get("timeout", 30)
+                    ):
+                        loop.call_soon_threadsafe(queue.put_nowait, chunk)
+                except Exception as e:
+                    stream_error = e
+                finally:
+                    loop.call_soon_threadsafe(queue.put_nowait, None)
 
-            chunks = await loop.run_in_executor(None, sync_stream)
-            logger.debug(f"开始发送 {len(chunks)} 个chunks到WebSocket")
+            loop = asyncio.get_event_loop()
+            loop.run_in_executor(None, sync_stream)
 
-            for chunk in chunks:
-                full_response += chunk
+            while True:
+                chunk = await queue.get()
+                if chunk is None:
+                    break
+                if chunk["type"] == "content":
+                    full_response += chunk["content"]
                 yield chunk
+
+            if stream_error:
+                raise stream_error
 
             logger.debug(f"所有chunks发送完成，总长度: {len(full_response)}")
 

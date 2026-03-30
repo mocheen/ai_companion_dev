@@ -90,6 +90,92 @@
             color: #6a737d;
             margin: 8px 0;
         }
+
+        /* 思考内容折叠区域 */
+        .thinking-block {
+            margin-bottom: 12px;
+            border-radius: 8px;
+            overflow: hidden;
+            border: 1px solid rgba(255, 255, 255, 0.06);
+        }
+
+        .thinking-header {
+            display: flex;
+            align-items: center;
+            padding: 10px 14px;
+            background: rgba(255, 255, 255, 0.03);
+            cursor: pointer;
+            user-select: none;
+            transition: background 0.2s;
+        }
+
+        .thinking-header:hover {
+            background: rgba(255, 255, 255, 0.06);
+        }
+
+        .thinking-header-icon {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            width: 20px;
+            height: 20px;
+            margin-right: 8px;
+            color: #7c7c8a;
+            transition: transform 0.3s ease;
+            flex-shrink: 0;
+        }
+
+        .thinking-header-icon.expanded {
+            transform: rotate(90deg);
+        }
+
+        .thinking-header-label {
+            font-size: 13px;
+            color: #7c7c8a;
+            flex: 1;
+        }
+
+        .thinking-header-status {
+            font-size: 12px;
+            color: #5c5c6a;
+            margin-left: 8px;
+        }
+
+        .thinking-body {
+            max-height: 0;
+            overflow: hidden;
+            transition: max-height 0.35s ease, padding 0.35s ease;
+        }
+
+        .thinking-body.expanded {
+            max-height: 500px;
+            overflow-y: auto;
+            padding: 0 14px 12px 14px;
+        }
+
+        .thinking-content {
+            font-size: 13px;
+            line-height: 1.7;
+            color: #8b8b9a;
+            white-space: pre-wrap;
+            word-break: break-word;
+        }
+
+        .thinking-content.streaming::after {
+            content: '';
+            display: inline-block;
+            width: 3px;
+            height: 14px;
+            background: #6a6a7a;
+            margin-left: 2px;
+            vertical-align: text-bottom;
+            animation: blink-cursor 1s step-end infinite;
+        }
+
+        @keyframes blink-cursor {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0; }
+        }
     </style>
 </head>
 <body>
@@ -250,10 +336,22 @@
 
                     ws.value.onmessage = (event) => {
                         const data = JSON.parse(event.data);
-                        if (data.type === 'chunk') {
+                        if (data.type === 'thinking_chunk') {
                             if (messages.value.length > 0) {
                                 const lastMsg = messages.value[messages.value.length - 1];
                                 if (lastMsg.role === 'assistant') {
+                                    lastMsg.thinking += data.content;
+                                    nextTick(() => { scrollToBottom(); });
+                                }
+                            }
+                        } else if (data.type === 'chunk') {
+                            if (messages.value.length > 0) {
+                                const lastMsg = messages.value[messages.value.length - 1];
+                                if (lastMsg.role === 'assistant') {
+                                    // 第一个content chunk到来时，标记思考结束
+                                    if (lastMsg.thinkingStreaming) {
+                                        lastMsg.thinkingStreaming = false;
+                                    }
                                     lastMsg.content += data.content;
                                     // 强制更新视图
                                     nextTick(() => {
@@ -267,11 +365,19 @@
                                 const lastMsg = messages.value[messages.value.length - 1];
                                 if (lastMsg.role === 'assistant') {
                                     lastMsg.streaming = false;
+                                    lastMsg.thinkingStreaming = false;
                                 }
                             }
                             scrollToBottom();
                         } else if (data.type === 'error') {
                             isTyping.value = false;
+                            if (messages.value.length > 0) {
+                                const lastMsg = messages.value[messages.value.length - 1];
+                                if (lastMsg.role === 'assistant') {
+                                    lastMsg.streaming = false;
+                                    lastMsg.thinkingStreaming = false;
+                                }
+                            }
                             message.error(data.message);
                         } else if (data.type === 'command_result') {
                             commandOutput.value = data.message;
@@ -337,7 +443,7 @@
 
                     // 使用reactive确保消息对象是响应式的
                     messages.value.push(reactive({ role: 'user', content: content, timestamp: new Date().toISOString() }));
-                    messages.value.push(reactive({ role: 'assistant', content: '', timestamp: new Date().toISOString(), streaming: true }));
+                    messages.value.push(reactive({ role: 'assistant', content: '', thinking: '', thinkingStreaming: true, thinkingExpanded: true, timestamp: new Date().toISOString(), streaming: true }));
 
                     inputMessage.value = '';
                     isTyping.value = true;
@@ -357,7 +463,8 @@
                         const data = await response.json();
                         if (data.success) {
                             messages.value = data.messages.map(msg => ({
-                                role: msg.role, content: msg.content, timestamp: msg.timestamp
+                                role: msg.role, content: msg.content, timestamp: msg.timestamp,
+                                thinking: msg.thinking || '', thinkingStreaming: false, thinkingExpanded: false
                             }));
                             scrollToBottom();
                         }
@@ -567,6 +674,17 @@
                                                         {{ msg.role === 'user' ? '你' : 'AI' }}
                                                     </n-text>
                                                 </template>
+                                                <!-- 思考内容折叠区域（仅 assistant 消息且有思考内容时显示） -->
+                                                <div v-if="msg.role === 'assistant' && msg.thinking" class="thinking-block">
+                                                    <div class="thinking-header" @click="msg.thinkingExpanded = !msg.thinkingExpanded">
+                                                        <span class="thinking-header-icon" :class="{ expanded: msg.thinkingExpanded }">&#9654;</span>
+                                                        <span class="thinking-header-label">{{ msg.thinkingStreaming ? '正在思考...' : '已深度思考' }}</span>
+                                                        <span class="thinking-header-status">{{ msg.thinkingStreaming ? '' : (msg.thinkingExpanded ? '收起' : '展开') }}</span>
+                                                    </div>
+                                                    <div class="thinking-body" :class="{ expanded: msg.thinkingExpanded }">
+                                                        <div class="thinking-content" :class="{ streaming: msg.thinkingStreaming }">{{ msg.thinking }}</div>
+                                                    </div>
+                                                </div>
                                                 <div class="markdown-content">
                                                     <span v-if="msg.streaming" style="white-space: pre-wrap;">{{ msg.content }}</span>
                                                     <span v-else v-html="renderMarkdown(msg.content)"></span>
@@ -576,7 +694,7 @@
                                     </div>
                                     <div v-if="isTyping" style="text-align: left;">
                                         <n-card style="max-width: 80%; display: inline-block; background: #2d3748;" size="small">
-                                            <n-text>AI正在思考</n-text>
+                                            <n-text>{{ messages.length > 0 && messages[messages.length - 1].content ? 'AI正在回复' : 'AI正在思考' }}</n-text>
                                             <n-spin size="small" style="margin-left: 8px;" />
                                         </n-card>
                                     </div>
