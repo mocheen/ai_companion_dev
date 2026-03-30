@@ -470,6 +470,9 @@ class FullMemorySystem(MemorySystemBase):
 
                 logger.info(f"标记话题结束: 共标记{marked_count}个话题结束位置")
 
+                # 保存标记到Redis，防止服务重启导致标记丢失
+                self._save_short_term_memory()
+
                 return json.dumps({
                     "status": "success",
                     "marked_count": marked_count,
