@@ -525,7 +525,7 @@
 
                 const loadSystemStatus = async () => {
                     try {
-                        const response = await fetch('/api/status');
+                        const response = await fetch('/api/status?light=true');
                         const data = await response.json();
                         if (data.success) Object.assign(systemStatus, data.status);
                     } catch (e) { console.error('加载系统状态失败:', e); }

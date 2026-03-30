@@ -113,7 +113,7 @@ async def lifespan(app: FastAPI):
                 # 如果status为None，则获取当前状态
                 if status is None:
                     from .routes.system import get_system_status_internal
-                    status = get_system_status_internal()
+                    status = get_system_status_internal(light=True)
                 # 使用call_soon_threadsafe来安全地调度异步任务
                 asyncio.run_coroutine_threadsafe(
                     ws_manager.broadcast_status(status), 
