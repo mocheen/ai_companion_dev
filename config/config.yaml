@@ -1,9 +1,9 @@
 api:
-  api_key: "${API_KEY}"
+  api_key: ${API_KEY}
   model: glm-4.7
   base_url: https://open.bigmodel.cn/api/paas/v4/
 agent_api:
-  api_key: "${AGENT_API_KEY}"
+  api_key: ${AGENT_API_KEY}
   model: glm-4.7
   base_url: https://open.bigmodel.cn/api/paas/v4/
   tool_choice: auto
@@ -46,7 +46,7 @@ vector_db:
   remote_port: ${CHROMA_PORT}
   embedding_type: ${EMBEDDING_TYPE}
   embedding_model: embedding-3
-  embedding_api_key: "${EMBEDDING_API_KEY}"
+  embedding_api_key: ${EMBEDDING_API_KEY}
   embedding_base_url: https://open.bigmodel.cn/api/paas/v4/
   local_embedding_model: shibing624/text2vec-base-chinese
   persistence_dir: data/chromadb

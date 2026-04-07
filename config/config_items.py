@@ -38,6 +38,7 @@ class ConfigItem:
     options: Optional[List[Dict[str, str]]] = None
     secret: bool = False
     requires_rebuild: bool = False
+    env_placeholder: bool = False  # 标记 yaml 中使用 ${ENV_VAR} 占位符的配置项
 
     def to_schema(self) -> dict:
         """转换为前端可用的 schema 字典"""
@@ -119,19 +120,14 @@ def _register_all_items():
         description="主 API 密钥",
         secret=True,
         requires_rebuild=True,
+        env_placeholder=True,
     ))
     config_registry.register(ConfigItem(
         key="api.model",
         label="模型名称",
-        type="select",
+        type="string",
         group="API 配置",
         default="glm-4.7",
-        options=[
-            {"label": "GLM-4.7", "value": "glm-4.7"},
-            {"label": "GLM-4-Flash", "value": "glm-4-flash"},
-            {"label": "GLM-4-Plus", "value": "glm-4-plus"},
-            {"label": "GLM-4-Air", "value": "glm-4-air"},
-        ],
         description="对话使用的模型",
         requires_rebuild=True,
     ))
@@ -155,19 +151,14 @@ def _register_all_items():
         description="Agent 专用的 API 密钥（用于记忆归档和重整）",
         secret=True,
         requires_rebuild=True,
+        env_placeholder=True,
     ))
     config_registry.register(ConfigItem(
         key="agent_api.model",
         label="Agent 模型",
-        type="select",
+        type="string",
         group="Agent 配置",
         default="glm-4.7",
-        options=[
-            {"label": "GLM-4.7", "value": "glm-4.7"},
-            {"label": "GLM-4-Flash", "value": "glm-4-flash"},
-            {"label": "GLM-4-Plus", "value": "glm-4-plus"},
-            {"label": "GLM-4-Air", "value": "glm-4-air"},
-        ],
         description="Agent 使用的模型",
         requires_rebuild=True,
     ))
@@ -308,6 +299,7 @@ def _register_all_items():
         ],
         description="向量数据库运行模式（修改后将覆盖环境变量值）",
         requires_rebuild=True,
+        env_placeholder=True,
     ))
     config_registry.register(ConfigItem(
         key="vector_db.embedding_type",
@@ -321,6 +313,7 @@ def _register_all_items():
         ],
         description="文本嵌入方式：使用远程 API 或本地模型（修改后将覆盖环境变量值）",
         requires_rebuild=True,
+        env_placeholder=True,
     ))
     config_registry.register(ConfigItem(
         key="vector_db.embedding_model",
@@ -340,6 +333,7 @@ def _register_all_items():
         description="嵌入服务的 API 密钥",
         secret=True,
         requires_rebuild=True,
+        env_placeholder=True,
     ))
     config_registry.register(ConfigItem(
         key="vector_db.embedding_base_url",

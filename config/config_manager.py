@@ -4,6 +4,7 @@
 """
 
 import logging
+import re
 import yaml
 from pathlib import Path
 from typing import Dict, Any, Optional, List
@@ -135,6 +136,20 @@ class ConfigManager:
             if item is None:
                 logger.warning(f"未注册的配置项: {key}，跳过")
                 continue
+
+            # 如果配置项标记了 env_placeholder，检查原始值是否为占位符
+            if item.env_placeholder:
+                raw_value = self._get_nested_value(raw_config, key)
+                if isinstance(raw_value, str) and re.match(r'^\$\{[^}]+\}$', raw_value):
+                    # 原始值是占位符，检查用户是否真的修改了值
+                    current_resolved_value = self._get_nested_value(current_resolved_config, key)
+                    if value == current_resolved_value:
+                        # 值没变，跳过写入，保留占位符
+                        logger.debug(f"配置项 {key} 未变更，保留环境变量占位符 {raw_value}")
+                        continue
+                    else:
+                        logger.info(f"配置项 {key} 已被用户修改，将覆盖环境变量占位符")
+
             self._set_nested_value(raw_config, key, value)
 
         # 3. 写入文件
