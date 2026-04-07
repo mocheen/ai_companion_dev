@@ -176,6 +176,12 @@
             0%, 100% { opacity: 1; }
             50% { opacity: 0; }
         }
+
+        /* 回溯时间轴 hover 显示回溯按钮 */
+        div[class*="rollback-btn"]:hover,
+        div:hover > .rollback-btn {
+            opacity: 1 !important;
+        }
     </style>
 </head>
 <body>
@@ -225,14 +231,15 @@
 
                 // 菜单
                 const menuOptions = [
-                    { label: '对话', key: 'chat', icon: () => h('span', '💬') },
-                    { label: '记忆', key: 'memory', icon: () => h('span', '🧠') },
-                    { label: '系统', key: 'system', icon: () => h('span', '💻') },
-                    { label: '设置', key: 'settings', icon: () => h('span', '⚙️') }
+                    { label: '对话', key: 'chat', icon: () => h('span', '\u{1F514}') },
+                    { label: '记忆', key: 'memory', icon: () => h('span', '\u{1F9E0}') },
+                    { label: '回溯', key: 'rollback', icon: () => h('span', '\u{23F0}') },
+                    { label: '系统', key: 'system', icon: () => h('span', '\u{1F4BB}') },
+                    { label: '设置', key: 'settings', icon: () => h('span', '\u2699\uFE0F') }
                 ];
 
                 const pageTitle = computed(() => {
-                    const titles = { chat: '对话', memory: '记忆管理', system: '系统管理', settings: '设置' };
+                    const titles = { chat: '对话', memory: '记忆管理', rollback: '记忆回溯', system: '系统管理', settings: '设置' };
                     return titles[activeMenu.value] || 'AI伙伴';
                 });
 
@@ -270,11 +277,11 @@
                 const logContainer = ref(null);
 
                 const quickCommands = [
-                    { cmd: '/status', label: '系统状态', icon: '📊' },
-                    { cmd: '/short', label: '短期记忆', icon: '📋' },
-                    { cmd: '/archive', label: '手动归档', icon: '📦' },
-                    { cmd: '/reorganize', label: '手动重整', icon: '🔄' },
-                    { cmd: '/help', label: '帮助', icon: '❓' }
+                    { cmd: '/status', label: '系统状态', icon: '\u{1F4CA}' },
+                    { cmd: '/short', label: '短期记忆', icon: '\u{1F4CB}' },
+                    { cmd: '/archive', label: '手动归档', icon: '\u{1F4E6}' },
+                    { cmd: '/reorganize', label: '手动重整', icon: '\u{1F504}' },
+                    { cmd: '/help', label: '帮助', icon: '\u2753' }
                 ];
 
                 const systemStatus = reactive({
@@ -288,19 +295,24 @@
                     max: systemStatus.memory.short_term_max
                 }));
 
-                // 设置
-                const settings = reactive({
-                    temperature: 0.7,
-                    maxTokens: 2000,
-                    shortTermMax: 20,
-                    mediumRetrieval: 3,
-                    longRetrieval: 2
-                });
+                // 设置 - 动态配置
+                const configSchema = ref([]);
+                const configValues = reactive({});
+                const configLoading = ref(false);
+                const configSaving = ref(false);
+
+                // 回溯
+                const rollbackSnapshots = ref([]);
+                const rollbackLoading = ref(false);
+                const rollbackAgentRunning = ref(false);
+                const selectedSnapshot = ref(null);
+                const snapshotDetail = ref(null);
+                const detailLoading = ref(false);
 
                 // 方法
                 const handleMenuChange = (key) => {
                     activeMenu.value = key;
-                    // 切换页面时触发status更新
+                    if (key === 'settings') loadConfig();
                     triggerStatusUpdate();
                 };
 
@@ -329,7 +341,7 @@
 
                 const connectWebSocket = () => {
                     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-                    const wsUrl = `${protocol}//${window.location.host}/ws/chat`;
+                    const wsUrl = protocol + '//' + window.location.host + '/ws/chat';
                     ws.value = new WebSocket(wsUrl);
 
                     ws.value.onopen = () => console.log('WebSocket连接已建立');
@@ -348,15 +360,11 @@
                             if (messages.value.length > 0) {
                                 const lastMsg = messages.value[messages.value.length - 1];
                                 if (lastMsg.role === 'assistant') {
-                                    // 第一个content chunk到来时，标记思考结束
                                     if (lastMsg.thinkingStreaming) {
                                         lastMsg.thinkingStreaming = false;
                                     }
                                     lastMsg.content += data.content;
-                                    // 强制更新视图
-                                    nextTick(() => {
-                                        scrollToBottom();
-                                    });
+                                    nextTick(() => { scrollToBottom(); });
                                 }
                             }
                         } else if (data.type === 'done') {
@@ -394,7 +402,7 @@
 
                 const connectLogWebSocket = () => {
                     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-                    const wsUrl = `${protocol}//${window.location.host}/ws/logs`;
+                    const wsUrl = protocol + '//' + window.location.host + '/ws/logs';
                     logWs.value = new WebSocket(wsUrl);
 
                     logWs.value.onmessage = (event) => {
@@ -417,7 +425,7 @@
 
                 const connectStatusWebSocket = () => {
                     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-                    const wsUrl = `${protocol}//${window.location.host}/ws/status`;
+                    const wsUrl = protocol + '//' + window.location.host + '/ws/status';
                     statusWs.value = new WebSocket(wsUrl);
 
                     statusWs.value.onopen = () => console.log('状态WebSocket连接已建立');
@@ -441,7 +449,6 @@
                     const content = inputMessage.value.trim();
                     if (!content || isTyping.value) return;
 
-                    // 使用reactive确保消息对象是响应式的
                     messages.value.push(reactive({ role: 'user', content: content, timestamp: new Date().toISOString() }));
                     messages.value.push(reactive({ role: 'assistant', content: '', thinking: '', thinkingStreaming: true, thinkingExpanded: true, timestamp: new Date().toISOString(), streaming: true }));
 
@@ -453,7 +460,6 @@
                         ws.value.send(JSON.stringify({ type: 'message', content: content }));
                     }
 
-                    // 发送消息后触发status更新
                     triggerStatusUpdate();
                 };
 
@@ -492,7 +498,7 @@
                         negativeText: '取消',
                         onPositiveClick: async () => {
                             try {
-                                const response = await fetch(`/api/memory/${type}/${id}`, { method: 'DELETE' });
+                                const response = await fetch('/api/memory/' + type + '/' + id, { method: 'DELETE' });
                                 const data = await response.json();
                                 if (data.success) {
                                     message.success('删除成功');
@@ -517,7 +523,7 @@
                         commandOutput.value = data.result;
                         triggerStatusUpdate();
                     } catch (e) {
-                        commandOutput.value = `错误: ${e.message}`;
+                        commandOutput.value = '错误: ' + e.message;
                     }
                 };
 
@@ -534,29 +540,65 @@
                 const refreshData = () => {
                     if (activeMenu.value === 'chat') loadHistory();
                     else if (activeMenu.value === 'memory') loadMemories();
+                    else if (activeMenu.value === 'rollback') loadRollbackSnapshots();
                     else if (activeMenu.value === 'system') loadSystemStatus();
                     loadSystemStatus();
                     message.success('已刷新');
                 };
 
                 const triggerStatusUpdate = () => {
-                    // 触发status更新（通过WebSocket）
                     if (statusWs.value && statusWs.value.readyState === WebSocket.OPEN) {
                         statusWs.value.send(JSON.stringify({ type: 'ping' }));
                     }
                 };
 
-                const saveSettings = () => {
-                    localStorage.setItem('ai-companion-settings', JSON.stringify(settings));
-                    message.success('设置已保存');
+                // 配置加载与保存
+                const loadConfig = async () => {
+                    configLoading.value = true;
+                    try {
+                        const [schemaRes, valuesRes] = await Promise.all([
+                            fetch('/api/config/schema'),
+                            fetch('/api/config')
+                        ]);
+                        const schemaData = await schemaRes.json();
+                        const valuesData = await valuesRes.json();
+                        if (schemaData.success) configSchema.value = schemaData.schema;
+                        if (valuesData.success) {
+                            Object.keys(configValues).forEach(k => delete configValues[k]);
+                            Object.assign(configValues, valuesData.config);
+                        }
+                    } catch (e) {
+                        console.error('加载配置失败:', e);
+                        message.error('加载配置失败');
+                    } finally {
+                        configLoading.value = false;
+                    }
                 };
 
-                const resetSettings = () => {
-                    settings.temperature = 0.7;
-                    settings.maxTokens = 2000;
-                    settings.shortTermMax = 20;
-                    settings.mediumRetrieval = 3;
-                    settings.longRetrieval = 2;
+                const saveConfig = async () => {
+                    configSaving.value = true;
+                    try {
+                        const response = await fetch('/api/config', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify(configValues)
+                        });
+                        const data = await response.json();
+                        if (data.success) {
+                            message.success(data.message);
+                        } else {
+                            message.error('保存失败');
+                        }
+                    } catch (e) {
+                        message.error('保存配置失败: ' + e.message);
+                    } finally {
+                        configSaving.value = false;
+                    }
+                };
+
+                const resetConfig = async () => {
+                    await loadConfig();
+                    message.info('已重新加载当前配置');
                 };
 
                 const getEmotionType = (emotion) => {
@@ -564,8 +606,96 @@
                     return types[emotion] || 'default';
                 };
 
+                // 回溯相关方法
+                const loadRollbackSnapshots = async () => {
+                    rollbackLoading.value = true;
+                    try {
+                        const response = await fetch('/api/rollback/list');
+                        const data = await response.json();
+                        if (data.success) {
+                            rollbackSnapshots.value = data.snapshots;
+                            rollbackAgentRunning.value = data.agent_running;
+                        }
+                    } catch (e) {
+                        console.error('加载回溯快照失败:', e);
+                        message.error('加载回溯数据失败');
+                    } finally {
+                        rollbackLoading.value = false;
+                    }
+                };
+
+                const loadSnapshotDetail = async (snapshotId) => {
+                    detailLoading.value = true;
+                    try {
+                        const response = await fetch(`/api/rollback/${snapshotId}`);
+                        const data = await response.json();
+                        if (data.success) {
+                            selectedSnapshot.value = snapshotId;
+                            snapshotDetail.value = data.snapshot;
+                        }
+                    } catch (e) {
+                        console.error('加载快照详情失败:', e);
+                        message.error('加载快照详情失败');
+                    } finally {
+                        detailLoading.value = false;
+                    }
+                };
+
+                const executeRollback = async (snapshotId) => {
+                    const snapshot = rollbackSnapshots.value.find(s => s.snapshot_id === snapshotId);
+                    const label = snapshot ? `${snapshot.agent_type} (${new Date(snapshot.created_at).toLocaleString('zh-CN')})` : snapshotId.slice(0, 8);
+
+                    dialog.warning({
+                        title: '确认回溯',
+                        content: `确定要回溯到节点「${label}」吗？此操作将撤销该节点之后的所有Agent操作，且不可恢复。`,
+                        positiveText: '确认回溯',
+                        negativeText: '取消',
+                        onPositiveClick: async () => {
+                            try {
+                                const response = await fetch(`/api/rollback/${snapshotId}/execute`, { method: 'POST' });
+                                const data = await response.json();
+                                if (data.success) {
+                                    message.success(data.message);
+                                    selectedSnapshot.value = null;
+                                    snapshotDetail.value = null;
+                                    await loadRollbackSnapshots();
+                                } else {
+                                    message.error(data.detail || data.message || '回溯失败');
+                                }
+                            } catch (e) {
+                                message.error('回溯执行失败: ' + e.message);
+                            }
+                        }
+                    });
+                };
+
+                const getActionLabel = (action) => {
+                    const labels = { create: '新增', delete: '删除', merge: '合并', clean_short_term: '清理短期记忆' };
+                    return labels[action] || action;
+                };
+
+                const getActionType = (action) => {
+                    const types = { create: 'success', delete: 'error', merge: 'warning', clean_short_term: 'info' };
+                    return types[action] || 'default';
+                };
+
+                const getTargetLabel = (target) => {
+                    const labels = { medium_term: '中期记忆', long_term: '长期记忆', short_term: '短期记忆' };
+                    return labels[target] || target;
+                };
+
+                const getAgentTypeLabel = (type) => {
+                    const labels = { archive: '归档', reorganize: '重整' };
+                    return labels[type] || type;
+                };
+
+                const getAgentTypeColor = (type) => {
+                    const colors = { archive: 'info', reorganize: 'warning' };
+                    return colors[type] || 'default';
+                };
+
                 const getEmotionText = (emotion) => {
-                    const texts = { positive: '😊 积极', negative: '😢 消极', neutral: '😐 中性' };
+                    const texts = { positive: '\u{1F60A} 积极', negative: '\u{1F622} 消极', neutral: '\u{1F610} 中性' };
                     return texts[emotion] || emotion;
                 };
 
@@ -585,14 +715,11 @@
                 };
 
                 onMounted(async () => {
-                    const savedSettings = localStorage.getItem('ai-companion-settings');
-                    if (savedSettings) Object.assign(settings, JSON.parse(savedSettings));
-
                     connectWebSocket();
                     connectLogWebSocket();
                     connectStatusWebSocket();
 
-                    await Promise.all([loadHistory(), loadMemories(), loadSystemStatus()]);
+                    await Promise.all([loadHistory(), loadMemories(), loadSystemStatus(), loadRollbackSnapshots()]);
                 });
 
                 return {
@@ -601,10 +728,16 @@
                     messages, inputMessage, isTyping, messageContainer,
                     mediumTermMemories, longTermMemories, memoryFilter, filteredMediumMemories,
                     commandInput, commandOutput, logs, autoScroll, logContainer,
-                    quickCommands, systemStatus, memoryStatus, settings,
+                    quickCommands, systemStatus, memoryStatus,
+                    configSchema, configValues, configLoading, configSaving,
+                    rollbackSnapshots, rollbackLoading, rollbackAgentRunning,
+                    selectedSnapshot, snapshotDetail, detailLoading,
                     handleMenuChange, formatTime, formatDateTime, renderMarkdown,
                     sendMessage, deleteMemory, executeCommand, clearLogs,
-                    refreshData, saveSettings, resetSettings,
+                    refreshData, loadConfig, saveConfig, resetConfig,
+                    loadRollbackSnapshots, loadSnapshotDetail, executeRollback,
+                    getActionLabel, getActionType, getTargetLabel,
+                    getAgentTypeLabel, getAgentTypeColor,
                     getEmotionType, getEmotionText, getMemoryTypeColor, getMemoryTypeText, getLogColor,
                     triggerStatusUpdate
                 };
@@ -624,7 +757,7 @@
                     >
                         <div style="padding: 16px; text-align: center;">
                             <n-text style="font-size: 20px; font-weight: bold; color: #409eff;">
-                                {{ collapsed ? '🤖' : '🤖 AI伙伴' }}
+                                {{ collapsed ? '\u{1F916}' : '\u{1F916} AI伙伴' }}
                             </n-text>
                         </div>
                         <n-menu
@@ -644,7 +777,7 @@
                             <n-space>
                                 <n-button quaternary circle @click="refreshData">
                                     <template #icon>
-                                        <n-icon><span style="font-size: 18px;">🔄</span></n-icon>
+                                        <n-icon><span style="font-size: 18px;">\u{1F504}</span></n-icon>
                                     </template>
                                 </n-button>
                             </n-space>
@@ -674,7 +807,6 @@
                                                         {{ msg.role === 'user' ? '你' : 'AI' }}
                                                     </n-text>
                                                 </template>
-                                                <!-- 思考内容折叠区域（仅 assistant 消息且有思考内容时显示） -->
                                                 <div v-if="msg.role === 'assistant' && msg.thinking" class="thinking-block">
                                                     <div class="thinking-header" @click="msg.thinkingExpanded = !msg.thinkingExpanded">
                                                         <span class="thinking-header-icon" :class="{ expanded: msg.thinkingExpanded }">&#9654;</span>
@@ -894,34 +1026,292 @@
                                 </n-tabs>
                             </div>
 
-                            <!-- 设置页面 -->
+                            <!-- 回溯页面 -->
+                            <div v-else-if="activeMenu === 'rollback'" style="height: 100%; display: flex; flex-direction: column;">
+                                <n-spin :show="rollbackLoading">
+                                    <div v-if="rollbackAgentRunning" style="margin-bottom: 16px;">
+                                        <n-alert type="warning" title="Agent运行中">
+                                            归档或重整Agent正在运行，回溯操作暂不可用。请等待Agent执行完毕。
+                                        </n-alert>
+                                    </div>
+
+                                    <div v-if="rollbackSnapshots.length === 0 && !rollbackLoading" style="text-align: center; padding: 60px; color: #999;">
+                                        <div style="font-size: 48px; margin-bottom: 16px;">\u{1F4E6}</div>
+                                        <n-text depth="3" style="font-size: 16px;">暂无回溯记录</n-text>
+                                        <div style="margin-top: 8px;">
+                                            <n-text depth="3" style="font-size: 13px;">Agent执行归档或重整操作后，回溯记录将自动出现在这里</n-text>
+                                        </div>
+                                    </div>
+
+                                    <div v-else style="display: flex; gap: 20px; height: 100%;">
+                                        <!-- 左侧：时间轴 -->
+                                        <div style="flex: 0 0 340px; overflow-y: auto;">
+                                            <n-card title="操作时间轴" size="small" style="height: 100%;">
+                                                <div style="position: relative; padding-left: 24px;">
+                                                    <!-- 时间轴竖线 -->
+                                                    <div style="position: absolute; left: 9px; top: 8px; bottom: 8px; width: 2px; background: #409eff; opacity: 0.3;"></div>
+
+                                                    <div v-for="(snapshot, index) in rollbackSnapshots" :key="snapshot.snapshot_id"
+                                                         style="position: relative; margin-bottom: 16px; cursor: pointer;"
+                                                         @click="loadSnapshotDetail(snapshot.snapshot_id)">
+
+                                                        <!-- 时间轴圆点 -->
+                                                        <div style="position: absolute; left: -20px; top: 6px; width: 12px; height: 12px; border-radius: 50%;"
+                                                             :style="{
+                                                                 background: selectedSnapshot === snapshot.snapshot_id ? '#409eff' : '#4a4a5a',
+                                                                 border: selectedSnapshot === snapshot.snapshot_id ? '2px solid #66b1ff' : '2px solid #5a5a6a',
+                                                                 boxShadow: selectedSnapshot === snapshot.snapshot_id ? '0 0 8px rgba(64,158,255,0.5)' : 'none'
+                                                             }">
+                                                        </div>
+
+                                                        <n-card size="small"
+                                                            :style="{
+                                                                borderColor: selectedSnapshot === snapshot.snapshot_id ? '#409eff' : 'transparent',
+                                                                background: selectedSnapshot === snapshot.snapshot_id ? 'rgba(64,158,255,0.08)' : 'rgba(255,255,255,0.03)'
+                                                            }"
+                                                            hoverable
+                                                            style="transition: all 0.2s;">
+                                                            <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px;">
+                                                                <n-tag :type="getAgentTypeColor(snapshot.agent_type)" size="small" round>
+                                                                    {{ getAgentTypeLabel(snapshot.agent_type) }}
+                                                                </n-tag>
+                                                                <n-text depth="3" style="font-size: 11px;">
+                                                                    {{ formatDateTime(snapshot.created_at) }}
+                                                                </n-text>
+                                                            </div>
+                                                            <n-text depth="2" style="font-size: 12px;">
+                                                                {{ snapshot.operations_count }} 个操作 &middot; ID: {{ snapshot.snapshot_id.slice(0, 8) }}
+                                                            </n-text>
+                                                        </n-card>
+
+                                                        <!-- 回溯按钮（除最新的节点外） -->
+                                                        <div v-if="index < rollbackSnapshots.length - 1"
+                                                             style="position: absolute; right: -8px; top: 50%; transform: translateY(-50%); opacity: 0; transition: opacity 0.2s;"
+                                                             class="rollback-btn">
+                                                            <n-button size="tiny" type="warning" quaternary circle
+                                                                @click.stop="executeRollback(snapshot.snapshot_id)"
+                                                                :disabled="rollbackAgentRunning">
+                                                                <template #icon>
+                                                                    <span style="font-size: 14px;">\u{21A9}</span>
+                                                                </template>
+                                                            </n-button>
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                            </n-card>
+                                        </div>
+
+                                        <!-- 右侧：快照详情 -->
+                                        <div style="flex: 1; overflow-y: auto;">
+                                            <n-card v-if="!snapshotDetail" style="height: 100%; display: flex; align-items: center; justify-content: center;">
+                                                <div style="text-align: center; color: #999;">
+                                                    <div style="font-size: 36px; margin-bottom: 12px;">\u{1F50D}</div>
+                                                    <n-text depth="3">点击左侧时间轴节点查看操作详情</n-text>
+                                                </div>
+                                            </n-card>
+
+                                            <n-spin v-else :show="detailLoading">
+                                                <n-card size="small">
+                                                    <template #header>
+                                                        <n-space align="center">
+                                                            <n-tag :type="getAgentTypeColor(snapshotDetail.agent_type)" round>
+                                                                {{ getAgentTypeLabel(snapshotDetail.agent_type) }}
+                                                            </n-tag>
+                                                            <n-text>快照详情</n-text>
+                                                        </n-space>
+                                                    </template>
+                                                    <template #header-extra>
+                                                        <n-space>
+                                                            <n-text depth="3" style="font-size: 12px;">
+                                                                {{ formatDateTime(snapshotDetail.created_at) }}
+                                                            </n-text>
+                                                            <n-button type="warning" size="small"
+                                                                @click="executeRollback(snapshotDetail.snapshot_id)"
+                                                                :disabled="rollbackAgentRunning || rollbackSnapshots.findIndex(s => s.snapshot_id === snapshotDetail.snapshot_id) >= rollbackSnapshots.length - 1">
+                                                                \u{21A9} 回溯到此节点
+                                                            </n-button>
+                                                        </n-space>
+                                                    </template>
+
+                                                    <n-descriptions bordered size="small" :column="2" label-style="width: 100px;">
+                                                        <n-descriptions-item label="快照ID">
+                                                            <n-text code>{{ snapshotDetail.snapshot_id.slice(0, 12) }}</n-text>
+                                                        </n-descriptions-item>
+                                                        <n-descriptions-item label="父节点">
+                                                            <n-text v-if="snapshotDetail.parent_id" code>{{ snapshotDetail.parent_id.slice(0, 12) }}</n-text>
+                                                            <n-text v-else depth="3">无（首个节点）</n-text>
+                                                        </n-descriptions-item>
+                                                        <n-descriptions-item label="操作数量">
+                                                            {{ snapshotDetail.operations.length }}
+                                                        </n-descriptions-item>
+                                                        <n-descriptions-item label="创建时间">
+                                                            {{ formatDateTime(snapshotDetail.created_at) }}
+                                                        </n-descriptions-item>
+                                                    </n-descriptions>
+
+                                                    <n-divider style="margin: 12px 0;">操作列表</n-divider>
+
+                                                    <n-timeline>
+                                                        <n-timeline-item v-for="op in snapshotDetail.operations" :key="op.step"
+                                                            :type="getActionType(op.action)">
+                                                            <template #header>
+                                                                <n-space align="center" size="small">
+                                                                    <n-tag :type="getActionType(op.action)" size="small" round>
+                                                                        {{ getActionLabel(op.action) }}
+                                                                    </n-tag>
+                                                                    <n-tag size="small" round>
+                                                                        {{ getTargetLabel(op.target_type) }}
+                                                                    </n-tag>
+                                                                    <n-text depth="3" style="font-size: 12px;">
+                                                                        {{ op.tool_name }}
+                                                                    </n-text>
+                                                                </n-space>
+                                                            </template>
+
+                                                            <div v-if="op.action === 'create'" style="margin-top: 4px;">
+                                                                <n-text depth="3" style="font-size: 12px;">
+                                                                    创建了 {{ op.created_ids.length }} 条记录
+                                                                </n-text>
+                                                                <div style="margin-top: 4px;">
+                                                                    <n-text v-for="id in op.created_ids" :key="id" code style="font-size: 11px; margin-right: 8px;">
+                                                                        {{ id.slice(0, 8) }}
+                                                                    </n-text>
+                                                                </div>
+                                                            </div>
+
+                                                            <div v-else-if="op.action === 'delete'" style="margin-top: 4px;">
+                                                                <n-text depth="3" style="font-size: 12px;">
+                                                                    删除了 {{ op.deleted_data.length }} 条记录（已保存原始数据用于恢复）
+                                                                </n-text>
+                                                                <n-collapse style="margin-top: 4px;">
+                                                                    <n-collapse-item title="查看被删除的数据" name="del">
+                                                                        <n-card v-for="(item, idx) in op.deleted_data" :key="idx" size="small" style="margin-bottom: 4px;">
+                                                                            <n-text depth="3" style="font-size: 11px;">ID: {{ item.id.slice(0, 8) }}</n-text>
+                                                                            <div v-if="item.data" style="margin-top: 4px;">
+                                                                                <n-text style="font-size: 12px;">
+                                                                                    {{ item.data.topic_summary || item.data.topic || JSON.stringify(item.data).slice(0, 100) }}
+                                                                                </n-text>
+                                                                            </div>
+                                                                        </n-card>
+                                                                    </n-collapse-item>
+                                                                </n-collapse>
+                                                            </div>
+
+                                                            <div v-else-if="op.action === 'merge'" style="margin-top: 4px;">
+                                                                <n-text depth="3" style="font-size: 12px;">
+                                                                    合并了 {{ op.deleted_data.length }} 条为 1 条新记录
+                                                                </n-text>
+                                                                <div style="margin-top: 4px;">
+                                                                    <n-text code style="font-size: 11px;">新ID: {{ op.created_ids[0]?.slice(0, 8) }}</n-text>
+                                                                </div>
+                                                                <n-collapse style="margin-top: 4px;">
+                                                                    <n-collapse-item title="查看被合并的原始数据" name="merge">
+                                                                        <n-card v-for="(item, idx) in op.deleted_data" :key="idx" size="small" style="margin-bottom: 4px;">
+                                                                            <n-text depth="3" style="font-size: 11px;">ID: {{ item.id.slice(0, 8) }}</n-text>
+                                                                            <div v-if="item.data" style="margin-top: 4px;">
+                                                                                <n-text style="font-size: 12px;">
+                                                                                    {{ item.data.topic_summary || item.data.topic || JSON.stringify(item.data).slice(0, 100) }}
+                                                                                </n-text>
+                                                                            </div>
+                                                                        </n-card>
+                                                                    </n-collapse-item>
+                                                                </n-collapse>
+                                                            </div>
+
+                                                            <div v-else-if="op.action === 'clean_short_term'" style="margin-top: 4px;">
+                                                                <n-text depth="3" style="font-size: 12px;">
+                                                                    清理了 {{ op.deleted_data.length }} 条短期记忆
+                                                                </n-text>
+                                                                <n-collapse style="margin-top: 4px;">
+                                                                    <n-collapse-item title="查看被清理的消息" name="stm">
+                                                                        <n-card v-for="(item, idx) in op.deleted_data.slice(0, 10)" :key="idx" size="small" style="margin-bottom: 4px;">
+                                                                            <n-text style="font-size: 12px;">
+                                                                                [{{ item.role === 'user' ? '用户' : 'AI' }}] {{ item.content?.slice(0, 80) }}
+                                                                            </n-text>
+                                                                        </n-card>
+                                                                        <n-text v-if="op.deleted_data.length > 10" depth="3" style="font-size: 11px;">
+                                                                            ... 还有 {{ op.deleted_data.length - 10 }} 条
+                                                                        </n-text>
+                                                                    </n-collapse-item>
+                                                                </n-collapse>
+                                                            </div>
+                                                        </n-timeline-item>
+                                                    </n-timeline>
+                                                </n-card>
+                                            </n-spin>
+                                        </div>
+                                    </div>
+                                </n-spin>
+                            </div>
+
+                            <!-- 设置页面 - 动态配置 -->
                             <div v-else-if="activeMenu === 'settings'" style="height: 100%; display: flex; justify-content: center; align-items: flex-start; overflow-y: auto;">
-                                <n-card title="设置" style="width: 100%; max-width: 600px;">
-                                    <n-form :model="settings" label-placement="left" label-width="120px">
-                                        <n-divider>对话设置</n-divider>
-                                        <n-form-item label="温度参数">
-                                            <n-slider v-model:value="settings.temperature" :min="0" :max="2" :step="0.1" />
-                                        </n-form-item>
-                                        <n-form-item label="最大Token">
-                                            <n-input-number v-model:value="settings.maxTokens" :min="100" :max="8000" />
-                                        </n-form-item>
-
-                                        <n-divider>记忆设置</n-divider>
-                                        <n-form-item label="短期记忆上限">
-                                            <n-input-number v-model:value="settings.shortTermMax" :min="5" :max="50" />
-                                        </n-form-item>
-                                        <n-form-item label="中期记忆检索">
-                                            <n-input-number v-model:value="settings.mediumRetrieval" :min="1" :max="10" />
-                                        </n-form-item>
-                                        <n-form-item label="长期记忆检索">
-                                            <n-input-number v-model:value="settings.longRetrieval" :min="1" :max="10" />
-                                        </n-form-item>
-
-                                        <n-space style="margin-top: 20px;">
-                                            <n-button type="primary" @click="saveSettings">保存设置</n-button>
-                                            <n-button @click="resetSettings">重置</n-button>
+                                <n-card title="系统设置" style="width: 100%; max-width: 700px;">
+                                    <template #header-extra>
+                                        <n-space>
+                                            <n-button @click="loadConfig" :loading="configLoading">
+                                                刷新
+                                            </n-button>
                                         </n-space>
-                                    </n-form>
+                                    </template>
+
+                                    <n-spin :show="configLoading">
+                                        <div v-if="configSchema.length === 0 && !configLoading" style="text-align: center; padding: 40px; color: #999;">
+                                            <n-text depth="3">点击"刷新"加载配置</n-text>
+                                        </div>
+
+                                        <n-form label-placement="left" label-width="140px">
+                                            <div v-for="group in configSchema" :key="group.group">
+                                                <n-divider>{{ group.group }}</n-divider>
+                                                <n-form-item v-for="item in group.items" :key="item.key" :label="item.label">
+                                                    <n-space vertical style="width: 100%;">
+                                                        <!-- slider 类型 -->
+                                                        <n-slider v-if="item.type === 'slider'"
+                                                            v-model:value="configValues[item.key]"
+                                                            :min="item.min"
+                                                            :max="item.max"
+                                                            :step="item.step"
+                                                        />
+                                                        <!-- number 类型 -->
+                                                        <n-input-number v-else-if="item.type === 'number'"
+                                                            v-model:value="configValues[item.key]"
+                                                            :min="item.min"
+                                                            :max="item.max"
+                                                            style="width: 100%;"
+                                                        />
+                                                        <!-- select 类型 -->
+                                                        <n-select v-else-if="item.type === 'select'"
+                                                            v-model:value="configValues[item.key]"
+                                                            :options="item.options"
+                                                        />
+                                                        <!-- password 类型 -->
+                                                        <n-input v-else-if="item.type === 'password'"
+                                                            v-model:value="configValues[item.key]"
+                                                            type="password"
+                                                            show-password-on="click"
+                                                            :placeholder="configValues[item.key] ? '已配置（点击修改）' : '未配置'"
+                                                        />
+                                                        <!-- string 类型 -->
+                                                        <n-input v-else
+                                                            v-model:value="configValues[item.key]"
+                                                        />
+                                                        <n-text v-if="item.description" depth="3" style="font-size: 12px;">
+                                                            {{ item.description }}
+                                                        </n-text>
+                                                    </n-space>
+                                                </n-form-item>
+                                            </div>
+                                        </n-form>
+
+                                        <n-space style="margin-top: 20px;" justify="center">
+                                            <n-button type="primary" @click="saveConfig" :loading="configSaving">
+                                                保存配置
+                                            </n-button>
+                                            <n-button @click="resetConfig" :loading="configLoading">
+                                                重置
+                                            </n-button>
+                                        </n-space>
+                                    </n-spin>
                                 </n-card>
                             </div>
                         </n-layout-content>

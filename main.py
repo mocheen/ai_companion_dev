@@ -18,7 +18,7 @@ def main():
     # 加载配置
     config = load_config()
     if not config:
-        print("配置文件加载失败，请检查 config/config.yaml 或 config/config_local.yaml")
+        print("配置文件加载失败，请检查 config/config.yaml")
         sys.exit(1)
 
     # 配置日志

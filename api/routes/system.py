@@ -9,7 +9,7 @@ from datetime import datetime
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 
-from ..app import get_config, get_memory_system, get_command_manager, get_chat_manager
+from ..app import get_config, get_memory_system, get_command_manager, get_chat_manager, get_config_manager
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -147,25 +147,32 @@ async def get_system_status(light: bool = Query(False, description="轻量级查
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@router.get("/config/schema")
+async def get_config_schema():
+    """获取配置项 schema（定义、类型、范围等）"""
+    try:
+        cm = get_config_manager()
+        if not cm:
+            raise HTTPException(status_code=503, detail="服务未就绪")
+        return {"success": True, "schema": cm.get_schema()}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"获取配置 schema 失败: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @router.get("/config")
 async def get_system_config():
-    """获取系统配置（敏感信息已脱敏）"""
+    """获取系统配置当前值"""
     try:
+        cm = get_config_manager()
         config = get_config()
-        if not config:
+        if not cm or not config:
             raise HTTPException(status_code=503, detail="服务未就绪")
 
-        # 脱敏处理
-        safe_config = {
-            "chat": config.get("chat", {}),
-            "memory_system": {"type": config.get("memory_system", {}).get("type", "simple")},
-            "short_term_memory": config.get("short_term_memory", {}),
-            "memory_retrieval": config.get("memory_retrieval", {}),
-            "commands": config.get("commands", {}),
-            "logging": {"level": config.get("logging", {}).get("level", "INFO")}
-        }
-
-        return {"success": True, "config": safe_config}
+        values = cm.get_current_values(config)
+        return {"success": True, "config": values}
 
     except HTTPException:
         raise
@@ -176,11 +183,34 @@ async def get_system_config():
 
 @router.post("/config")
 async def update_system_config(config_updates: dict):
-    """更新系统配置（运行时，不持久化）"""
+    """更新系统配置（持久化到文件并重载）
+
+    请求体格式: {"chat.temperature": 0.8, "api.model": "glm-4-plus", ...}
+    """
     try:
-        # 注意：这里只更新内存中的配置，不写入文件
-        # 实际项目中应该有更完善的配置管理机制
-        return {"success": True, "message": "配置已更新（仅本次会话有效）"}
+        cm = get_config_manager()
+        config = get_config()
+        if not cm or not config:
+            raise HTTPException(status_code=503, detail="服务未就绪")
+
+        # 检查是否需要重建组件
+        needs_rebuild = cm.check_rebuild_needed(config_updates)
+
+        # 更新配置（写入文件 + 重载内存）
+        new_config = cm.update_config(config_updates, config)
+
+        # 更新全局配置
+        from ..app import _set_config
+        _set_config(new_config)
+
+        # 更新引用了 config 的组件
+        from ..app import _rebuild_components
+        _rebuild_components(new_config, full_rebuild=needs_rebuild)
+
+        rebuild_msg = "，相关组件已重建" if needs_rebuild else ""
+        logger.info(f"配置已更新并持久化{rebuild_msg}")
+
+        return {"success": True, "message": f"配置已保存并重载{rebuild_msg}"}
 
     except Exception as e:
         logger.error(f"更新配置失败: {e}", exc_info=True)

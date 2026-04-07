@@ -26,6 +26,7 @@ from memory.memory_models import (
     EmotionType, DialogueType, LongTermMemoryType
 )
 from memory.vector_store import VectorStore
+from memory.rollback_manager import RollbackManager
 from llm.zhipu_llm import ZhipuLLM
 from llm.models import Message, MessageRole
 from agent.base_agent import BaseAgent
@@ -95,6 +96,9 @@ class FullMemorySystem(MemorySystemBase):
 
         # 初始化向量数据库
         self.vector_store = VectorStore(config)
+
+        # 初始化回溯管理器
+        self.rollback_manager = RollbackManager(config)
 
         # 初始化LLM客户端（用于普通对话）
         api_config = config.get("api", {})
@@ -335,10 +339,13 @@ class FullMemorySystem(MemorySystemBase):
     def _trigger_archive_async(self):
         """异步触发归档流程"""
         def archive_worker():
+            self.rollback_manager.begin_snapshot("archive")
             try:
                 self._archive_short_term_memory()
+                self.rollback_manager.save_snapshot()
             except Exception as e:
                 logger.error(f"归档短期记忆失败: {e}", exc_info=True)
+                self.rollback_manager.discard_snapshot()
 
         thread = Thread(target=archive_worker, daemon=True)
         thread.start()
@@ -346,12 +353,14 @@ class FullMemorySystem(MemorySystemBase):
     def _trigger_reorganize_async(self):
         """异步触发中期记忆重整流程"""
         def reorganize_worker():
+            self.rollback_manager.begin_snapshot("reorganize")
             try:
                 self.reorganize_medium_term_memory()
-                # 重整成功后更新时间
                 self._update_reorganize_time()
+                self.rollback_manager.save_snapshot()
             except Exception as e:
                 logger.error(f"重整中期记忆失败: {e}", exc_info=True)
+                self.rollback_manager.discard_snapshot()
 
         thread = Thread(target=reorganize_worker, daemon=True)
         thread.start()
@@ -481,13 +490,12 @@ class FullMemorySystem(MemorySystemBase):
 
         def create_memory_card_func(cards_json: str) -> str:
             """创建记忆卡片"""
+            created_ids = []
             try:
                 cards_data = json.loads(cards_json)
 
                 if not isinstance(cards_data, list):
                     cards_data = [cards_data]
-
-                created_ids = []
                 if len(cards_data) > 1:
                     # 使用批量处理，避免触发速率限制
                     memories = []
@@ -532,6 +540,12 @@ class FullMemorySystem(MemorySystemBase):
             except Exception as e:
                 logger.error(f"创建记忆卡片失败: {e}")
                 return json.dumps({"status": "error", "message": str(e)})
+
+            finally:
+                if created_ids:
+                    self.rollback_manager.record_create(
+                        "create_memory_card", "medium_term", created_ids
+                    )
 
         # 注册工具
         tool_executor.register_tool(Tool(
@@ -595,6 +609,11 @@ class FullMemorySystem(MemorySystemBase):
             # 最后一个话题结束的位置
             last_topic_end_index = topic_end_indices[-1]
 
+            # 记录被清理的短期记忆（用于回溯恢复）
+            removed_messages = []
+            for msg in self.short_term_memory[:last_topic_end_index]:
+                removed_messages.append(msg.to_dict())
+
             # 保留从最后一个话题结束位置开始的所有消息
             original_count = len(self.short_term_memory)
             self.short_term_memory = self.short_term_memory[last_topic_end_index:]
@@ -605,6 +624,10 @@ class FullMemorySystem(MemorySystemBase):
 
             removed_count = original_count - len(self.short_term_memory)
             logger.info(f"清理已归档消息: 删除了{removed_count}条，保留了{len(self.short_term_memory)}条")
+
+            # 记录短期记忆清理操作到回溯
+            if removed_messages:
+                self.rollback_manager.record_clean_short_term(removed_messages)
 
             # 保存清理后的短期记忆
             self._save_short_term_memory()
@@ -760,6 +783,15 @@ class FullMemorySystem(MemorySystemBase):
         ) -> str:
             """合并相似记忆"""
             try:
+                # 记录被删除记忆的完整数据（用于回溯恢复）
+                deleted_data = []
+                for mem_id in delete_ids:
+                    all_mems = self.vector_store.get_all_medium_term_memories()
+                    for m in all_mems:
+                        if m["id"] == mem_id:
+                            deleted_data.append(m)
+                            break
+
                 # 删除旧记忆
                 for mem_id in delete_ids:
                     self.vector_store.delete_medium_term_memory(mem_id)
@@ -778,6 +810,12 @@ class FullMemorySystem(MemorySystemBase):
                 new_id = self.vector_store.add_medium_term_memory(memory)
 
                 logger.info(f"合并记忆: 删除{len(delete_ids)}个，创建新记忆 {new_id}")
+
+                # 记录合并操作到回溯
+                self.rollback_manager.record_merge(
+                    "merge_similar_memories", "medium_term",
+                    deleted_data, [new_id]
+                )
 
                 return json.dumps({
                     "status": "success",
@@ -810,6 +848,12 @@ class FullMemorySystem(MemorySystemBase):
                     created_ids.append(memory_id)
                     logger.info(f"创建长期记忆: {memory.topic[:50]}...")
 
+                # 记录创建操作到回溯
+                if created_ids:
+                    self.rollback_manager.record_create(
+                        "create_long_term_memory", "long_term", created_ids
+                    )
+
                 return json.dumps({
                     "status": "success",
                     "created_ids": created_ids,
@@ -822,12 +866,27 @@ class FullMemorySystem(MemorySystemBase):
 
         def delete_medium_term_memories_func(memory_ids: List[str]) -> str:
             """删除中期记忆"""
+            # 记录被删除记忆的完整数据（用于回溯恢复）
+            deleted_data = []
+            all_mems = self.vector_store.get_all_medium_term_memories()
+            for mem_id in memory_ids:
+                for m in all_mems:
+                    if m["id"] == mem_id:
+                        deleted_data.append(m)
+                        break
+
             deleted_count = 0
             for mem_id in memory_ids:
                 if self.vector_store.delete_medium_term_memory(mem_id):
                     deleted_count += 1
 
             logger.info(f"删除中期记忆: {deleted_count}条")
+
+            # 记录删除操作到回溯
+            if deleted_data:
+                self.rollback_manager.record_delete(
+                    "delete_medium_term_memories", "medium_term", deleted_data
+                )
 
             return json.dumps({
                 "status": "success",

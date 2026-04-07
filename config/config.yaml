@@ -1,98 +1,63 @@
-# API配置
 api:
   api_key: "${API_KEY}"
-  model: "glm-4.7"
-  base_url: "https://open.bigmodel.cn/api/paas/v4/"
-
-# Agent专用API配置（用于记忆归档和重整的自主代理）
+  model: glm-4.7
+  base_url: https://open.bigmodel.cn/api/paas/v4/
 agent_api:
   api_key: "${AGENT_API_KEY}"
-  model: "glm-4.7"
-  base_url: "https://open.bigmodel.cn/api/paas/v4/"
-  tool_choice: "auto"
-
-# Agent配置
+  model: glm-4.7
+  base_url: https://open.bigmodel.cn/api/paas/v4/
+  tool_choice: auto
 agent:
-  # 归档Agent配置
   archive:
-    max_iterations: 20  # 归档Agent最大迭代次数（防止无限循环）
-
-  # 重整Agent配置
+    max_iterations: 20
   reorganize:
-    max_iterations: 40  # 重整Agent最大迭代次数（防止无限循环）
-
-# Redis配置
+    max_iterations: 40
 redis:
-  host: "${REDIS_HOST}"
+  host: ${REDIS_HOST}
   port: ${REDIS_PORT}
   db: ${REDIS_DB}
-  password: "${REDIS_PASSWORD}"  # 如果有密码，填在这里
-  prefix: "${REDIS_PREFIX}"  # Redis键的前缀
-
-# 短期记忆配置
+  password: ${REDIS_PASSWORD}
+  prefix: ${REDIS_PREFIX}
 short_term_memory:
-  max_turns: 20 # 短期记忆最大对话轮数
-  persist_file: "data/short_term_memory.json"  # 短期记忆持久化文件路径（local模式使用）
-
-# 记忆系统配置
+  max_turns: 20
+  persist_file: data/short_term_memory.json
 memory_system:
-  type: "full"  # "simple" 或 "full" - simple仅使用短期记忆，full使用完整的三层记忆系统
-
-# 对话配置
+  type: full
 chat:
-  temperature: 0.7  # 温度参数，控制随机性
-  max_tokens: 2000  # 最大生成token数
-  timeout: 60  # API请求超时时间(秒)
-
-# 提示文件路径
+  temperature: 0.7
+  max_tokens: 2000
+  timeout: 60
 prompts:
-  system_prompt: "prompts/system_prompt.txt"
-  user_prompt: "prompts/user_prompt.txt"
-  archive_agent: "memory/prompts/archive_agent_prompt.txt"
-  reorganize_agent: "memory/prompts/reorganize_agent_prompt.txt"
-
-# 日志配置
+  system_prompt: prompts/system_prompt.txt
+  user_prompt: prompts/user_prompt.txt
+  archive_agent: memory/prompts/archive_agent_prompt.txt
+  reorganize_agent: memory/prompts/reorganize_agent_prompt.txt
 logging:
-  level: "DEBUG"  # 日志级别: DEBUG, INFO, WARNING, ERROR
-  log_dir: "logs"
-  log_file: "ai_companion.log"
-  enable_file: false  # 是否启用文件日志（true=启用，false=仅控制台输出）
-
-# 记忆检索配置
+  level: DEBUG
+  log_dir: logs
+  log_file: ai_companion.log
+  enable_file: false
 memory_retrieval:
-  medium_term_count: 3  # 检索的中期记忆卡片数量
-  long_term_count: 2    # 检索的长期记忆卡片数量
-
-# 向量数据库配置
+  medium_term_count: 3
+  long_term_count: 2
 vector_db:
-  # ChromaDB模式: "local" (本地文件) 或 "remote" (远程服务)
-  mode: "${VECTOR_DB_MODE}"
-
-  # 远程ChromaDB服务配置（当mode="remote"时使用）
-  remote_host: "${CHROMA_HOST}"  # 远程ChromaDB服务地址
-  remote_port: ${CHROMA_PORT}         # 远程ChromaDB服务端口
-
-  # 嵌入方式: "local" (本地模型) 或 "api" (API服务)
-  embedding_type: "${EMBEDDING_TYPE}"
-
-  # API嵌入配置（当embedding_type="api"时使用）
-  embedding_model: "${EMBEDDING_MODEL}"
+  mode: ${VECTOR_DB_MODE}
+  remote_host: ${CHROMA_HOST}
+  remote_port: ${CHROMA_PORT}
+  embedding_type: ${EMBEDDING_TYPE}
+  embedding_model: embedding-3
   embedding_api_key: "${EMBEDDING_API_KEY}"
-  embedding_base_url: "https://open.bigmodel.cn/api/paas/v4/"
-
-  # 本地嵌入配置（当embedding_type="local"时使用）
-  local_embedding_model: "shibing624/text2vec-base-chinese"  # 中文嵌入模型
-
-  # ChromaDB本地配置（当mode="local"时使用）
-  persistence_dir: "data/chromadb"  # ChromaDB持久化存储目录
-  collection_medium: "medium_term_memories"  # 中期记忆集合名称
-  collection_long: "long_term_memories"  # 长期记忆集合名称
-
-# 记忆流转配置
+  embedding_base_url: https://open.bigmodel.cn/api/paas/v4/
+  local_embedding_model: shibing624/text2vec-base-chinese
+  persistence_dir: data/chromadb
+  collection_medium: medium_term_memories
+  collection_long: long_term_memories
 memory_flow:
-  archive_interval_days: 7  # 中期记忆重整间隔（天）
-  flow_state_file: "data/memory_flow_state.json"  # 记忆流转状态持久化文件
-
-# 命令系统配置
+  archive_interval_days: 7
+  flow_state_file: data/memory_flow_state.json
+rollback:
+  enabled: true
+  max_snapshots: 50
+  storage_dir: data/rollback_snapshots
 commands:
-  prefix: "/"  # 管理员命令前缀，如 "/" 表示使用 /help, /exit 等命令
+  prefix: /
