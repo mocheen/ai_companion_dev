@@ -102,7 +102,7 @@ class ConfigManager:
             resolved_config: 经过环境变量替换后的配置字典
 
         Returns:
-            {key: value} 的字典
+            {key: value} 的字典，secret 字段返回遮蔽值
         """
         values = {}
         for item in config_registry.get_all():
@@ -111,6 +111,9 @@ class ConfigManager:
                 values[item.key] = val
             else:
                 values[item.key] = item.default
+            # secret 字段遮蔽：前端只能看到占位符，无法获取真实值
+            if item.secret and isinstance(values[item.key], str) and values[item.key]:
+                values[item.key] = "******"
         return values
 
     def update_config(
@@ -135,6 +138,10 @@ class ConfigManager:
             item = config_registry.get(key)
             if item is None:
                 logger.warning(f"未注册的配置项: {key}，跳过")
+                continue
+
+            # secret 字段：前端发来遮蔽值表示未修改，跳过
+            if item.secret and value == "******":
                 continue
 
             # 如果配置项标记了 env_placeholder，检查原始值是否为占位符
